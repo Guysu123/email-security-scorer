@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Environment secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+
+# Build output
+.vercel/
+dist/
+*.js.map
+
+# TypeScript cache
+*.tsbuildinfo
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/settings.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Clasp credentials (contains OAuth tokens)
+.clasprc.json
+addon/.clasp.json

@@ -1,0 +1,23 @@
+{
+  "name": "upwind-email-scorer-backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3",
+    "mailparser": "^3.7.1",
+    "sanitize-html": "^2.13.1"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.4",
+    "@types/node": "^20.0.0",
+    "@types/sanitize-html": "^2.13.0",
+    "@vercel/node": "^5.8.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
