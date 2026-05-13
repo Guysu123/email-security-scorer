@@ -21,13 +21,13 @@ function extractEmailPayload(message) {
   // Truncate headers defensively (64KB max per sanitizer.ts)
   if (rawHeaders.length > 65536) rawHeaders = rawHeaders.slice(0, 65536);
 
-  // Extract plain text and HTML bodies (Gmail API handles MIME decoding)
-  var plainText = message.getPlainBody() || null;
+  // Extract plain text and HTML bodies from rawContent — no extra Gmail API calls
+  var plainText = getPlainBodyFromRaw(rawContent) || null;
   var htmlBody  = getHtmlBody(rawContent) || null;
 
   // Truncate to match backend limits
-  if (plainText && plainText.length > 51200)  plainText = plainText.slice(0, 51200);
-  if (htmlBody  && htmlBody.length  > 204800) htmlBody  = htmlBody.slice(0, 204800);
+  if (plainText && plainText.length > 51200) plainText = plainText.slice(0, 51200);
+  if (htmlBody  && htmlBody.length  > 20480) htmlBody  = htmlBody.slice(0, 20480);
 
   // Attachment metadata only — never send attachment content
   var attachments = [];
@@ -86,6 +86,35 @@ function parseEmailAddress(from) {
   if (match) return match[1].trim().toLowerCase();
   // Fallback: treat entire string as email if no angle brackets
   return from.trim().toLowerCase();
+}
+
+/**
+ * Extract the plain-text body from raw MIME without an extra Gmail API call.
+ * Handles multipart (finds text/plain part) and simple non-multipart emails.
+ */
+function getPlainBodyFromRaw(rawContent) {
+  var plainMatch = rawContent.match(
+    /Content-Type:\s*text\/plain[^\n]*\n(?:[^\n]+\n)*?\n([\s\S]*?)(?=\n--|\n\n--|\s*$)/i
+  );
+  if (plainMatch) {
+    var body = plainMatch[1].trim();
+    // Check CTE only within this part's headers, not the whole raw content
+    var partStart = rawContent.indexOf(plainMatch[0]);
+    var partHeadersEnd = rawContent.indexOf("\n\n", partStart);
+    var partHeaders = rawContent.slice(partStart, partHeadersEnd);
+    if (/Content-Transfer-Encoding:\s*base64/i.test(partHeaders)) {
+      try {
+        body = Utilities.newBlob(
+          Utilities.base64Decode(body.replace(/\s/g, ""))
+        ).getDataAsString("UTF-8");
+      } catch (e) {}
+    }
+    return body || null;
+  }
+  // Simple non-multipart email: body follows the header block
+  var split = rawContent.indexOf("\r\n\r\n");
+  if (split === -1) split = rawContent.indexOf("\n\n");
+  return split !== -1 ? rawContent.slice(split + 4).trim() || null : null;
 }
 
 /**
