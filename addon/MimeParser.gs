@@ -37,7 +37,7 @@ function extractEmailPayload(message) {
       return {
         filename:  blob.getName() || "unknown",
         mimeType:  blob.getContentType() || "application/octet-stream",
-        sizeBytes: blob.getBytes().length,
+        sizeBytes: blob.getSize(),
         sha256Hint: null
       };
     });

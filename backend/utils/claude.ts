@@ -31,7 +31,7 @@ export async function analyzeBEC(
   senderDomain: string
 ): Promise<BECAnalysis | null> {
   // Limit input to control costs and reduce injection surface
-  const truncatedText = plainText.slice(0, 3000);
+  const truncatedText = plainText.slice(0, 2000);
 
   const prompt = `You are a cybersecurity analyst specializing in Business Email Compromise (BEC) detection. Analyze the email below and respond ONLY with valid JSON matching the schema provided. Do not include any explanation outside the JSON.
 
@@ -62,7 +62,7 @@ Respond with JSON only:`;
   try {
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 800,
+      max_tokens: 400,
       messages: [{ role: "user", content: prompt }],
     });
 
