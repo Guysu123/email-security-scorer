@@ -1,163 +1,157 @@
-# Upwind Email Security Scorer
+# Email Security Scorer
 
-A Gmail Add-on that analyzes opened emails and produces a 0–100 maliciousness score with a per-signal explainable verdict.
+A production-grade Gmail Add-on that performs real-time, multi-dimensional threat analysis on every email you open — returning a 0–100 maliciousness score with a per-signal, explainable verdict.
 
 ---
 
-## The Problem This Solves
+## The Problem
 
-Business Email Compromise (BEC) caused **$2.9 billion in reported losses in 2023**. The defining characteristic of BEC: **zero technical payload**. No malicious links. No dangerous attachments. No executable code. Just precisely calibrated social engineering language — and traditional signature-based filters are completely blind to it.
+Business Email Compromise (BEC) caused **$2.9 billion in reported losses in 2023** (FBI IC3). The defining characteristic of BEC: **zero technical payload**. No malware. No suspicious links. No executable attachments. Just precisely calibrated social engineering — and every signature-based email filter on the market is completely blind to it.
 
 This system operates on two threat planes simultaneously:
 
-- **Structural/Technical Plane** — headers, MIME structure, URLs, HTML patterns
-- **Semantic/Linguistic Plane** — intent, social engineering patterns, urgency/authority pressure
+| Plane | What it covers |
+|---|---|
+| **Structural / Technical** | SMTP authentication (SPF, DKIM, DMARC), header chain anomalies, URL homograph attacks, HTML smuggling primitives, attachment deception |
+| **Semantic / Linguistic** | BEC urgency/authority/financial language patterns, feature starvation, AI-assisted BEC intent detection |
 
-Most commercial email security products only operate on the first plane. This architecture covers both.
+Most commercial email security products only cover the structural plane. This architecture covers both.
 
 ---
 
 ## Architecture
 
 ```
-Gmail (contextual trigger — fires when email is opened)
-    │
-    ↓ onGmailMessage()
-Apps Script (Code.gs)
-    → GmailApp.getMessageById() — raw MIME + headers
-    → MimeParser.gs — structured payload extraction
-    → UrlFetchApp POST /api/analyze
+Gmail contextual trigger (email opened)
         │
-        ↓
-Vercel Serverless Function (api/analyze.ts)
-    → sanitizer.ts — AnalyzeRequest → safe EmailContext (trust boundary)
-    → orchestrator.ts — Promise.allSettled([...5 scanners in parallel...])
-    → scoring.ts — weighted aggregation + amplification rules
-    ← JSON: finalScore, riskLevel, verdict, per-scanner breakdown
-        │
-        ↓
-CardBuilder.gs → Gmail Sidebar Card
+        ▼
+Apps Script Add-on
+  ├── MimeParser.gs     — raw MIME → structured payload
+  └── ApiClient.gs      — authenticated POST to backend
+        │  JSON over HTTPS
+        ▼
+Vercel Serverless Function (TypeScript)
+  ├── sanitizer.ts      — trust boundary (raw request → safe EmailContext)
+  ├── orchestrator.ts   — 5 scanners run in parallel (Promise.allSettled)
+  └── scoring.ts        — weighted aggregation + amplification rules
+        │  JSON response
+        ▼
+Gmail Sidebar Card
+  └── finalScore | riskLevel | verdict | per-scanner breakdown | topSignals
 ```
 
-Each scanner is **independently isolated** — a timeout or failure in one scanner does not block the analysis. The response always includes whatever results are available, with a `partialAnalysis` flag.
+### Five Independent Scanners (run in parallel)
 
----
-
-## The Five Scanners
-
-| Scanner | Weight | What it detects |
+| Scanner | Weight | Detection Scope |
 |---|---|---|
-| **HeaderAuthScanner** | 30% | SPF/DKIM/DMARC failures, Received chain anomalies, SMTP Smuggling indicators |
-| **BECLinguisticScanner** | 25% | Urgency language, authority impersonation, feature starvation, AI-diction (Stage 2: Claude API) |
-| **URLScanner** | 20% | Punycode/homograph attacks, typosquatting, HTML Smuggling primitives, subdomain confusion |
-| **SenderReputationScanner** | 15% | Lookalike domains, Reply-To mismatch, display name spoofing, free provider + financial combos |
-| **ContentStructureScanner** | 10% | Dangerous attachments, double extensions, MIME anomalies, hidden CSS content |
+| **HeaderAuthScanner** | 30% | SPF/DKIM/DMARC failures, Received chain anomalies, SMTP Smuggling indicators, DKIM domain misalignment |
+| **BECLinguisticScanner** | 25% | Rule-based urgency/authority/financial patterns (Stage 1), Claude Haiku LLM analysis (Stage 2, gated) |
+| **URLScanner** | 20% | Punycode/homograph attacks, typosquatting (edit-distance), HTML Smuggling JS primitives, subdomain confusion |
+| **SenderReputationScanner** | 15% | Lookalike sender domains, Reply-To hijacking, display name spoofing, free-provider + financial combos |
+| **ContentStructureScanner** | 10% | Dangerous attachment extensions, double-extension attacks, MIME deep nesting, zero-font CSS concealment |
 
-### Scoring Algorithm
-
-```
-baseScore = Σ (scanner.score × scanner.weight)
-
-# Critical signal override: any CRITICAL finding lifts floor to 70
-if any signal.severity == CRITICAL: finalScore = max(baseScore, 70)
-
-# Corroboration amplification: ≥3 scanners agree → boost confidence
-if ≥3 scanners score > 50: finalScore = min(100, baseScore × 1.2)
-
-# Authentication attenuation: strong DMARC pass reduces false positives
-if HeaderAuth.score < 10 AND BECLinguistic.score < 20: finalScore = baseScore × 0.8
-
-Risk levels: CRITICAL ≥70 | HIGH 55–69 | MEDIUM 35–54 | LOW 0–34
-```
-
-Verdicts are **template-generated server-side** — never LLM-generated. This prevents adversarial email content from manipulating the verdict text through prompt injection.
+Each scanner runs inside an **individual timeout + try/catch** — a failure or timeout in one scanner never blocks analysis. The response always includes all available results with a `partialAnalysis` flag.
 
 ---
 
-## Architecture Decision Records
+## Scoring Algorithm
 
-### ADR-1: Serverless Functions over Express Server
+```
+baseScore = Σ(scanner.score × scanner.weight)
 
-**Decision:** Each backend route is a standalone Vercel serverless function (`api/*.ts`), not a long-running Express server.
+# Critical override: any CRITICAL signal sets floor at 70
+if any signal.severity == CRITICAL → baseScore = max(baseScore, 70)
 
-**Rationale:** Forced statelessness eliminates an entire class of attacks — there is no persistent process holding secrets in memory, no session state to hijack, no middleware chain where a misconfigured middleware could leak data between requests. Each invocation starts cold with only the environment variables it needs.
+# Corroboration boost: ≥3 scanners independently agree on threat
+if ≥3 scanners score > 50 → baseScore = min(100, baseScore × 1.2)
 
-### ADR-2: Google Apps Script over Browser Extension
+# Weak corroboration floor: 2+ scanners flag HIGH/CRITICAL signals
+if ≥2 scanners have HIGH/CRITICAL signals → baseScore = max(baseScore, 40)
 
-**Decision:** The add-on uses the native Google Workspace Add-on framework (Apps Script with CardService contextual triggers) rather than a Chrome extension injecting into the Gmail DOM.
+# Authentication attenuation: strong DMARC pass + clean language reduces FPs
+if HeaderAuth.score < 10 AND BECLinguistic.score < 20 → baseScore × 0.8
 
-**Rationale:** Contextual triggers provide access to the **full raw MIME message** via `GmailApp.getMessageById()`. A browser extension can only see the rendered HTML — which Gmail has already processed and partially sanitized. SMTP Smuggling indicators, raw `Received` header chains, and MIME structure anomalies are only visible in the raw message. The raw MIME is where the truth lives.
-
-### ADR-3: LLM Analysis Gated Behind Rule-Based Stage 1
-
-**Decision:** The `BECLinguisticScanner` invokes Claude only when the Stage 1 rule-based score exceeds 25.
-
-**Rationale:**
-1. **Cost control** — most emails score 0 at Stage 1. Gating eliminates ~80% of LLM API calls.
-2. **Prompt injection surface reduction** — an adversary will craft BEC emails specifically to manipulate an LLM into returning low scores. By gating, we only expose the LLM to emails already flagged as suspicious, and we:
-   - Send only sanitized plain text (never HTML)
-   - Wrap content in XML delimiters
-   - Schema-validate all LLM responses (any invalid response is discarded)
-   - Cap the LLM's score contribution at 40% blend weight — it cannot single-handedly drive the final score to zero
-
----
-
-## Threat Model
-
-| Threat | Attack Vector | Mitigation | Residual Risk |
-|---|---|---|---|
-| **Prompt Injection** | Adversarial email content manipulates LLM into returning benign verdict | Plain text only; XML delimiters; schema validation; 40% cap on LLM contribution | LLM could still partially suppress score for sophisticated attacks |
-| **Header Injection** | Raw email headers injected into UrlFetchApp HTTP request | All request data serialized via `JSON.stringify()` — never string-concatenated | Low — JSON serialization is safe |
-| **Oversized Payload DoS** | Email with massive body to exhaust backend | 500KB request limit enforced before any parsing; per-field size caps in sanitizer | Very low |
-| **API Key Exposure** | Secret leaked via logs or error responses | Keys stored in Vercel env vars + Apps Script ScriptProperties; never logged; timing-safe comparison; hash used for rate-limit keys | Low if deployment follows documented procedure |
-| **Evidence XSS** | HTML in email body rendered as markup in sidebar | All `Signal.evidence` strings HTML-entity-escaped before serialization | CardService doesn't execute JS, but defense in depth is maintained |
-
----
-
-## Adding a New Scanner
-
-The modular scanner pattern means a new detection module is a single file drop. Here's the complete implementation of a hypothetical `IPReputationScanner`:
-
-```typescript
-// backend/scanners/IPReputationScanner.ts
-import { BaseScanner } from "./base";
-import { EmailContext, ScannerResult } from "../lib/types";
-
-export class IPReputationScanner extends BaseScanner {
-  readonly id = "IPReputationScanner";
-  readonly displayName = "IP Reputation";
-  readonly weight = 0.10;
-  readonly timeoutMs = 3000;
-
-  protected async execute(context: EmailContext): Promise<ScannerResult> {
-    const signals = [];
-    let score = 0;
-    // ... detection logic ...
-    return this.buildResult(score, signals);
-  }
-}
+Risk Levels:  CRITICAL ≥70  |  HIGH 55–69  |  MEDIUM 35–54  |  LOW 0–34
 ```
 
-Then add it to `backend/lib/orchestrator.ts`:
-```typescript
-import { IPReputationScanner } from "../scanners/IPReputationScanner";
-const SCANNERS: IScanner[] = [
-  // ... existing scanners ...
-  new IPReputationScanner(),
-];
-```
-
-No other changes required. The orchestrator, scoring engine, and API response format all handle it automatically.
+Verdicts are **template-selected server-side** — never LLM-generated. This is a deliberate security decision: adversarial email content cannot manipulate the verdict text through prompt injection.
 
 ---
 
-## Security Handling
+## Key Technical Decisions
 
-- **Untrusted input isolation:** Raw `AnalyzeRequest` → `sanitizer.ts` → typed `EmailContext`. Scanners never receive the raw request object.
-- **No PII in logs:** Structured logger never includes email addresses, body content, or subject lines.
-- **Scope minimization:** Add-on requests only `gmail.readonly` and `gmail.addons.execute`. No write permissions.
-- **Secret management:** `ADDON_API_SECRET` and `ANTHROPIC_API_KEY` stored in Vercel environment variables and Apps Script `ScriptProperties` respectively — never in source code.
-- **SSRF prevention:** `openLinkUrlPrefixes` in `appsscript.json` is an allowlist that restricts `UrlFetchApp` calls to the backend domain only.
+### Serverless Functions over a Persistent Express Server
+
+Forced statelessness eliminates an entire class of attacks. There is no persistent process holding secrets in memory between requests, no session state to hijack, and no middleware chain that could leak data across concurrent requests. Every invocation starts cold with only the environment variables it needs.
+
+### Google Apps Script over a Chrome Extension
+
+Contextual triggers give access to the **full raw MIME message** via `GmailApp.getMessageById()`. A Chrome extension can only see the rendered HTML — which Gmail has already processed and partially sanitized. SMTP Smuggling indicators, raw `Received` header chains, and MIME structure anomalies are only visible in the raw MIME. The raw MIME is where the truth lives.
+
+### LLM Analysis Gated Behind Rule-Based Stage 1
+
+The `BECLinguisticScanner` invokes Claude only when the Stage 1 rule score exceeds 25.
+
+- **Cost control:** Most legitimate emails score 0 at Stage 1. Gating eliminates ~80% of LLM API calls.
+- **Prompt injection surface reduction:** The LLM only sees emails already flagged as suspicious. Input is sanitized plain text (never HTML), wrapped in XML delimiters, and schema-validated. The LLM's score contribution is capped at 40% blend weight — it cannot single-handedly suppress the final score.
+
+### Maximum-Score Aggregation within Scanners
+
+Inside each scanner, overlapping signals use `score = Math.max(score, newFloor)` rather than additive accumulation. This prevents score inflation when multiple patterns describe the same underlying threat. Cross-scanner amplification is handled by the scoring engine, not by individual scanners.
+
+---
+
+## Security Highlights
+
+| Concern | Mitigation |
+|---|---|
+| **API authentication** | `crypto.timingSafeEqual` Bearer token comparison (constant-time) |
+| **Rate limiting** | 60 req/hr keyed on SHA-256 token hash (raw token never logged) |
+| **Input size** | 500 KB request cap; per-field limits on headers, plain text, HTML |
+| **Header injection** | `\r\n` stripped from all string fields in sanitizer |
+| **XSS in evidence strings** | All `Signal.evidence` HTML-entity-escaped before serialization |
+| **Prompt injection** | Plain text only; XML delimiters; schema validation; 40% weight cap |
+| **Secret storage** | Vercel env vars + Apps Script ScriptProperties; never in source |
+| **Scope minimization** | Add-on requests `gmail.readonly` only — zero write permissions |
+| **SSRF** | `openLinkUrlPrefixes` in appsscript.json restricts `UrlFetchApp` to backend domain |
+
+---
+
+## System Architecture Diagram
+
+```mermaid
+flowchart TD
+    A([User opens email in Gmail]) --> B[onGmailMessage — Code.gs]
+    B --> C[extractEmailPayload — MimeParser.gs]
+    C --> D[callAnalyzeApi — ApiClient.gs\nPOST /api/analyze\nBearer token auth]
+
+    D --> E{handler — api/analyze.ts}
+    E -->|401| ERR1([UNAUTHORIZED])
+    E -->|429| ERR2([RATE_LIMITED])
+    E -->|413| ERR3([PAYLOAD_TOO_LARGE])
+
+    E --> F[sanitize — lib/sanitizer.ts\nTrust Boundary\nAnalyzeRequest → EmailContext]
+    F --> G[runAnalysis — lib/orchestrator.ts\nPromise.allSettled]
+
+    G --> H1[HeaderAuthScanner\nw=0.30 SPF·DKIM·DMARC]
+    G --> H2[BECLinguisticScanner\nw=0.25 Stage1→Stage2 LLM]
+    G --> H3[URLScanner\nw=0.20 Homograph·Typosquat]
+    G --> H4[SenderReputationScanner\nw=0.15 Lookalike·ReplyTo]
+    G --> H5[ContentStructureScanner\nw=0.10 Attachment·MIME]
+
+    H2 -->|score > 25| LLM[Claude Haiku\nBEC Intent Analysis\n3000 char limit · schema-validated]
+    LLM --> H2
+
+    H1 & H2 & H3 & H4 & H5 --> I[aggregate — lib/scoring.ts\nWeighted avg\n+ Critical override\n+ Corroboration boost\n+ Auth attenuation]
+
+    I --> J[AnalyzeResponse\nfinalScore · riskLevel\nverdict · topSignals\nper-scanner breakdown]
+    J --> K[buildResultCard — CardBuilder.gs\nGmail Sidebar Card]
+    K --> L([User sees threat score + signals])
+
+    style F fill:#ff6b6b,color:#fff
+    style LLM fill:#4ecdc4,color:#fff
+    style I fill:#45b7d1,color:#fff
+```
 
 ---
 
@@ -167,46 +161,41 @@ No other changes required. The orchestrator, scoring engine, and API response fo
 # 1. Install backend dependencies
 cd backend && npm install
 
-# 2. Create local environment file
+# 2. Create local environment
 cp .env.example .env.local
-# Edit .env.local with your ADDON_API_SECRET and ANTHROPIC_API_KEY
+# Set ADDON_API_SECRET (min 32 random bytes) and ANTHROPIC_API_KEY
 
-# 3. Start backend dev server
+# 3. Start Vercel dev server
 npm run dev
-# Listening on http://localhost:3000
+# → http://localhost:3000
 
-# 4. Expose via ngrok
+# 4. Expose locally via ngrok
 ngrok http 3000
 # → https://abc123.ngrok.io
 
-# 5. Configure Apps Script
-# In Apps Script Editor → Project Settings → Script Properties:
+# 5. Configure Apps Script properties
+# Apps Script Editor → Project Settings → Script Properties:
 #   BACKEND_URL      = https://abc123.ngrok.io
 #   ADDON_API_SECRET = (same value as .env.local)
 
-# 6. Deploy add-on
+# 6. Push add-on
 cd ../addon
 npx @google/clasp push
 npx @google/clasp deploy --description "dev"
-
-# 7. Install in Gmail
-# Follow the deployment URL → Install Add-on → Open any email
 ```
 
 ## Production Deployment
 
 ```bash
-# Deploy backend to Vercel
+# Deploy backend
 cd backend
 vercel deploy --prod
-# Set environment variables in Vercel dashboard:
-#   ADDON_API_SECRET, ANTHROPIC_API_KEY
+# Set in Vercel dashboard: ADDON_API_SECRET, ANTHROPIC_API_KEY
 
-# Update Apps Script BACKEND_URL to Vercel deployment URL
-# Re-deploy add-on:
+# Update Apps Script BACKEND_URL to Vercel prod URL
 npx @google/clasp deploy --description "prod"
 
-# Verify backend health
+# Verify
 curl https://your-project.vercel.app/api/health
 ```
 
@@ -215,57 +204,55 @@ curl https://your-project.vercel.app/api/health
 ## Project Structure
 
 ```
-upwind-email-scorer/
-├── addon/                    # Google Apps Script (clasp-deployable)
-│   ├── appsscript.json       # Manifest: scopes, trigger, OAuth
-│   ├── Code.gs               # Contextual trigger entry point
-│   ├── CardBuilder.gs        # Gmail sidebar UI
-│   ├── ApiClient.gs          # Backend HTTP client
-│   ├── MimeParser.gs         # Email data extraction
-│   └── Constants.gs          # Runtime config + UI helpers
+email-security-scorer/
+├── addon/                         # Google Apps Script (clasp-deployable)
+│   ├── appsscript.json            # Manifest: scopes, trigger, OAuth config
+│   ├── Code.gs                    # Contextual trigger entry point
+│   ├── MimeParser.gs              # MIME extraction + payload construction
+│   ├── ApiClient.gs               # Authenticated backend HTTP client
+│   └── Constants.gs               # Runtime config (BACKEND_URL, ADDON_VERSION)
 │
 ├── backend/
 │   ├── api/
-│   │   ├── analyze.ts        # POST /api/analyze
-│   │   └── health.ts         # GET /api/health
+│   │   ├── analyze.ts             # POST /api/analyze — main analysis handler
+│   │   └── health.ts              # GET /api/health
 │   ├── lib/
-│   │   ├── types.ts          # All TypeScript interfaces
-│   │   ├── sanitizer.ts      # Trust boundary (raw → safe EmailContext)
-│   │   ├── orchestrator.ts   # Parallel scanner execution
-│   │   ├── scoring.ts        # Weighted aggregation algorithm
-│   │   └── logger.ts         # Structured logging (no PII)
+│   │   ├── types.ts               # All TypeScript interfaces
+│   │   ├── sanitizer.ts           # Trust boundary: raw request → EmailContext
+│   │   ├── orchestrator.ts        # Parallel scanner execution (Promise.allSettled)
+│   │   ├── scoring.ts             # Weighted aggregation + amplification rules
+│   │   └── logger.ts              # Structured logging (no PII)
 │   ├── scanners/
-│   │   ├── base.ts           # Abstract BaseScanner with timeout isolation
-│   │   ├── HeaderAuthScanner.ts
-│   │   ├── BECLinguisticScanner.ts
-│   │   ├── URLScanner.ts
+│   │   ├── base.ts                # Abstract BaseScanner with timeout isolation
+│   │   ├── HeaderAuthScanner.ts   # SPF/DKIM/DMARC/Received chain analysis
+│   │   ├── BECLinguisticScanner.ts# Rule-based + LLM BEC detection
+│   │   ├── URLScanner.ts          # URL threat analysis
 │   │   ├── SenderReputationScanner.ts
 │   │   └── ContentStructureScanner.ts
 │   └── utils/
-│       ├── claude.ts         # Anthropic SDK wrapper (schema-validated)
-│       ├── html.ts           # HTML smuggling detection + entity escaping
-│       ├── punycode.ts       # Homograph/typosquat detection
-│       └── dns.ts            # SPF/DMARC record fetching
+│       ├── claude.ts              # Anthropic SDK wrapper (schema-validated)
+│       ├── html.ts                # HTML smuggling detection + entity escaping
+│       ├── punycode.ts            # Homograph/typosquat detection utilities
+│       └── dns.ts                 # SPF/DMARC DNS record fetcher
 │
+├── DOCUMENTATION.md               # Full API reference + technical spec
 ├── .env.example
 └── .gitignore
 ```
 
 ---
 
-## Known Limitations & Future Work
+## Known Limitations
 
-**Current limitations** (intentional scope decisions, not oversights):
+1. **No attachment content scanning** — only metadata (name, MIME type, size) is analyzed. Content detonation requires an isolated sandbox environment (e.g., AWS Lambda with no outbound network).
 
-1. **No attachment content scanning** — sending attachment bytes to an external API raises data privacy concerns that are disproportionate to the value in a single-user deployment. A production system would use an isolated sandbox (e.g., AWS Lambda with no outbound network) for content detonation.
+2. **Expert-tuned weights, not ML-derived** — the 30/25/20/15/10 weight distribution reflects domain knowledge, not a trained model. A production system would derive weights via logistic regression on a labeled phishing/legitimate corpus.
 
-2. **Expert-tuned scorer weights** — the 30/25/20/15/10 weight distribution is based on domain knowledge, not a labeled dataset. A production system would derive weights via logistic regression on a balanced phishing/legitimate corpus (e.g., CEAS, SpamAssassin public datasets).
+3. **Rate limiting resets on cold start** — the in-memory rate limiter is appropriate for single-user deployment. Multi-tenant deployment requires a persistent store (Redis, Vercel KV).
 
-3. **DNS checks are best-effort** — serverless functions have no persistent cache, so DNS lookups happen on every invocation. High-volume deployment would add a Redis layer for TTL-based DNS response caching.
+4. **LLM prompt injection is mitigated, not eliminated** — schema validation, plain-text-only input, and the 40% contribution cap significantly reduce the attack surface, but a fine-tuned classification model would be more robust than a general-purpose LLM for adversarial inputs.
 
-4. **LLM prompt injection is mitigated, not eliminated** — the schema validation and contribution cap reduce the attack surface significantly, but a sufficiently crafted adversarial prompt could still partially suppress the BEC score. A fine-tuned classification model on labeled BEC samples would be more robust than a general-purpose LLM.
-
-5. **Rate limiting resets on cold start** — the in-memory rate limiter is sufficient for a single-user add-on but would need a persistent store (Redis, Vercel KV) for multi-tenant deployment.
+5. **No OCR** — malicious content embedded in images is not detected.
 
 ---
 

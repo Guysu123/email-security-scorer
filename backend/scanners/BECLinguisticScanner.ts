@@ -46,7 +46,7 @@ export class BECLinguisticScanner extends BaseScanner {
   readonly id = "BECLinguisticScanner";
   readonly displayName = "Linguistic & BEC Analysis";
   readonly weight = 0.25;
-  readonly timeoutMs = 12000; // allow time for LLM call
+  readonly timeoutMs = 8000; // allow time for LLM call
 
   protected async execute(context: EmailContext): Promise<ScannerResult> {
     const signals: Signal[] = [];
@@ -164,7 +164,7 @@ export class BECLinguisticScanner extends BaseScanner {
       logger.debug("BECLinguisticScanner: invoking LLM Stage 2", { stage1Score });
 
       const llmResult = await analyzeBEC(
-        text.slice(0, 3000),
+        text.slice(0, 2000),
         context.subject,
         context.sender.domain
       );
