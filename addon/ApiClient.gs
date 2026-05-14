@@ -25,15 +25,19 @@ function callAnalyzeApi(payload) {
     return { ok: false, data: null, statusCode: 0, error: "ADDON_API_SECRET not configured in Script Properties" };
   }
 
+  var encKey = getEncryptionKey();
+  var body   = encKey
+    ? JSON.stringify({ enc: encryptPayload(JSON.stringify(payload), encKey) })
+    : JSON.stringify(payload);
+
   var options = {
     method:             "post",
     contentType:        "application/json",
     headers: {
       "Authorization":  "Bearer " + secret,
-      "X-Request-ID":   reqId,
       "X-Addon-Version": ADDON_VERSION
     },
-    payload:            JSON.stringify(payload),  // Safe: structured serialization
+    payload:            body,
     muteHttpExceptions: true
   };
 

@@ -4,6 +4,7 @@ import { sanitize } from "../lib/sanitizer";
 import { runAnalysis } from "../lib/orchestrator";
 import { logger } from "../lib/logger";
 import { escapeHtml } from "../utils/html";
+import { decryptPayload } from "../lib/encryption";
 import crypto from "crypto";
 
 const BACKEND_VERSION = "1.0.0";
@@ -96,8 +97,26 @@ export default async function handler(
     return;
   }
 
+  // Decrypt payload if encryption is configured and the body has an "enc" field
+  let body: unknown = req.body;
+  const encryptionKey = process.env.PAYLOAD_ENCRYPTION_KEY;
+  if (
+    encryptionKey &&
+    typeof body === "object" && body !== null &&
+    "enc" in body
+  ) {
+    try {
+      const decrypted = decryptPayload((body as Record<string, unknown>).enc as string, encryptionKey);
+      body = JSON.parse(decrypted);
+      logger.info("Payload decrypted successfully", { requestId });
+    } catch {
+      res.status(400).json({ error: "DECRYPTION_FAILED", message: "Could not decrypt payload", requestId } as ErrorResponse);
+      return;
+    }
+  }
+
   // Validate shape
-  if (!validateRequest(req.body)) {
+  if (!validateRequest(body)) {
     res.status(400).json({
       error: "VALIDATION_ERROR",
       message: "Request body missing required fields",
@@ -111,7 +130,7 @@ export default async function handler(
 
   try {
     // Sanitize: untrusted AnalyzeRequest → safe EmailContext
-    const context = sanitize(req.body as AnalyzeRequest);
+    const context = sanitize(body as AnalyzeRequest);
 
     // Run all scanners
     const result = await runAnalysis(context);

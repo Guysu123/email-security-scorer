@@ -64,6 +64,27 @@ Full-stack security audit covering secrets handling, data encryption in transit,
 
 ---
 
+---
+
+### 6. Application-Layer Payload Encryption (MEDIUM) — Fixed
+
+**Files:** `addon/Crypto.gs`, `addon/ApiClient.gs`, `addon/Constants.gs`, `backend/lib/encryption.ts`, `backend/api/analyze.ts`
+
+**Problem:** Email content was transmitted as plaintext JSON inside the TLS channel. TLS protects against network interception but does not prevent the infrastructure provider (Vercel) from reading the payload at the function boundary.
+
+**Fix applied:**
+- Added `addon/Crypto.gs` — implements HMAC-SHA256-CTR authenticated encryption using only Apps Script's built-in `Utilities` class (no external libraries).
+- The add-on encrypts the full JSON payload before sending when `PAYLOAD_ENCRYPTION_KEY` is set in Script Properties.
+- Wire format: `{ "enc": "<base64(nonce[16] || ciphertext[n] || mac[32])>" }`
+- Backend (`backend/lib/encryption.ts`) decrypts using Node's built-in `crypto` module and verifies the MAC with `timingSafeEqual` before decrypting.
+- Encryption is opt-in: if the key is not configured, the add-on falls back to unencrypted JSON (backward compatible).
+
+**Key format:** 64 hex characters (32 bytes). Generate with: `openssl rand -hex 32`
+
+**Threat model note:** This protects against Vercel reading the payload. It does not protect against Google — the add-on runs on Google's infrastructure and holds the encryption key, and the email already lives in Gmail. Both parties must be trusted in this architecture.
+
+---
+
 ## What Was Already Correct
 
 | Area | Detail |
