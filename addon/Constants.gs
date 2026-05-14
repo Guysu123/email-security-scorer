@@ -18,6 +18,10 @@ function getApiSecret() {
   return PropertiesService.getScriptProperties().getProperty("ADDON_API_SECRET") || "";
 }
 
+function getEncryptionKey() {
+  return PropertiesService.getScriptProperties().getProperty("PAYLOAD_ENCRYPTION_KEY") || null;
+}
+
 // UI color constants for risk levels
 var RISK_COLORS = {
   CRITICAL: { icon: "ERROR", label: "🔴 CRITICAL RISK" },
