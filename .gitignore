@@ -31,3 +31,6 @@ npm-debug.log*
 # Clasp credentials (contains OAuth tokens)
 .clasprc.json
 addon/.clasp.json
+
+# Internal docs
+security_fixes.md
