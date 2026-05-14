@@ -4,6 +4,13 @@
  * to communicate severity visually.
  */
 
+var SEVERITY_LABELS = {
+  CRITICAL: "Critical",
+  HIGH:     "High",
+  MEDIUM:   "Medium",
+  LOW:      "Low"
+};
+
 /** Returns the initial loading card shown while the API call is in flight */
 function buildLoadingCard() {
   return CardService.newCardBuilder()
@@ -11,6 +18,8 @@ function buildLoadingCard() {
       CardService.newCardHeader()
         .setTitle("Email Security Scorer")
         .setSubtitle("Analyzing…")
+        .setImageUrl("https://upwind-email-scorer.vercel.app/icons/logo.svg")
+        .setImageStyle(CardService.ImageStyle.CIRCLE)
     )
     .addSection(
       CardService.newCardSection()
@@ -29,6 +38,8 @@ function buildErrorCard(errorMessage) {
       CardService.newCardHeader()
         .setTitle("Email Security Scorer")
         .setSubtitle("Analysis Failed")
+        .setImageUrl("https://upwind-email-scorer.vercel.app/icons/logo.svg")
+        .setImageStyle(CardService.ImageStyle.CIRCLE)
     )
     .addSection(
       CardService.newCardSection()
@@ -52,13 +63,14 @@ function buildErrorCard(errorMessage) {
 /** Builds the main results card from a successful AnalyzeResponse */
 function buildResultCard(data) {
   var riskConfig = RISK_COLORS[data.riskLevel] || RISK_COLORS["LOW"];
-  var scoreBar   = buildScoreBar(data.finalScore);
 
   var card = CardService.newCardBuilder()
     .setHeader(
       CardService.newCardHeader()
         .setTitle("Email Security Scorer")
         .setSubtitle("Upwind Security Analysis")
+        .setImageUrl("https://upwind-email-scorer.vercel.app/icons/logo.svg")
+        .setImageStyle(CardService.ImageStyle.CIRCLE)
     );
 
   // ── Risk badge + score ────────────────────────────────────────────────────
@@ -69,10 +81,6 @@ function buildResultCard(data) {
         .setText(riskConfig.label)
         .setBottomLabel("Score: " + data.finalScore + " / 100")
         .setWrapText(false)
-    )
-    .addWidget(
-      CardService.newTextParagraph()
-        .setText(scoreBar)
     )
     .addWidget(
       CardService.newTextParagraph()
@@ -89,8 +97,8 @@ function buildResultCard(data) {
     data.topSignals.forEach(function(signal) {
       topSection.addWidget(
         CardService.newDecoratedText()
-          .setTopLabel(signal.severity)
-          .setText(signal.description)
+          .setText(SEVERITY_LABELS[signal.severity] || signal.severity)
+          .setBottomLabel(signal.description)
           .setWrapText(true)
       );
     });
@@ -106,11 +114,10 @@ function buildResultCard(data) {
       .setNumUncollapsibleWidgets(0);
 
     data.scannerResults.forEach(function(scanner) {
-      var bar = buildScoreBar(scanner.score);
       detailSection.addWidget(
         CardService.newDecoratedText()
           .setTopLabel(scanner.displayName)
-          .setText(bar)
+          .setText(scanner.score + " / 100")
           .setBottomLabel(
             scanner.signals.length > 0
               ? scanner.signals[0].description.slice(0, 80)
@@ -125,8 +132,7 @@ function buildResultCard(data) {
       CardService.newTextParagraph()
         .setText(
           "<font color=\"#888888\"><i>Analysis by Upwind Email Scorer v" +
-          ADDON_VERSION + " · " +
-          (data.metadata ? data.metadata.totalExecutionMs + "ms" : "") +
+          ADDON_VERSION +
           (data.partialAnalysis ? " · partial results" : "") +
           "</i></font>"
         )
@@ -143,6 +149,7 @@ function buildResultCard(data) {
           .addButton(
             CardService.newTextButton()
               .setText("Re-analyze")
+              .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED)
               .setOnClickAction(
                 CardService.newAction().setFunctionName("onRetry")
               )

@@ -10,7 +10,7 @@
   ],
   "gmail": {
     "name": "Email Security Scorer",
-    "logoUrl": "https://upwind-email-scorer.vercel.app/icons/logo.png",
+    "logoUrl": "https://upwind-email-scorer.vercel.app/icons/logo.svg",
     "contextualTriggers": [
       {
         "unconditional": {},
@@ -21,6 +21,6 @@
       "https://upwind-email-scorer.vercel.app"
     ],
     "primaryColor": "#1a1a2e",
-    "secondaryColor": "#e63946"
+    "secondaryColor": "#4a90e2"
   }
 }
