@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Security Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: white;
+      padding: 18px 28px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 20px; font-weight: 700; }
+    header p  { font-size: 13px; opacity: 0.65; margin-top: 3px; }
+
+    .container {
+      max-width: 1000px;
+      margin: 28px auto;
+      padding: 0 20px;
+    }
+
+    /* ── KPI cards ─────────────────────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    .kpi-card {
+      background: white;
+      border-radius: 10px;
+      padding: 20px 16px;
+      text-align: center;
+      box-shadow: 0 1px 4px rgba(0,0,0,.10);
+    }
+    .kpi-value {
+      display: block;
+      font-size: 38px;
+      font-weight: 700;
+      line-height: 1.1;
+    }
+    .kpi-label {
+      font-size: 12px;
+      color: #777;
+      margin-top: 6px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    /* ── Section cards ─────────────────────────────────────────────────── */
+    .section {
+      background: white;
+      border-radius: 10px;
+      padding: 22px 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.10);
+    }
+    .section h2 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #1a1a2e;
+      margin-bottom: 18px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    /* ── Distribution bars ─────────────────────────────────────────────── */
+    .dist-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 14px;
+      gap: 14px;
+    }
+    .dist-label {
+      width: 100px;
+      font-size: 13px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .dist-bar-bg {
+      flex: 1;
+      background: #f0f2f5;
+      border-radius: 5px;
+      height: 26px;
+      overflow: hidden;
+    }
+    .dist-bar {
+      height: 100%;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      color: white;
+      font-size: 12px;
+      font-weight: 700;
+      transition: width .4s ease;
+      min-width: 28px;
+    }
+    .dist-count {
+      width: 36px;
+      text-align: right;
+      font-size: 13px;
+      font-weight: 600;
+      color: #444;
+      flex-shrink: 0;
+    }
+
+    /* ── Tables ─────────────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead th {
+      text-align: left;
+      padding: 9px 14px;
+      background: #f8f9fa;
+      color: #555;
+      font-weight: 600;
+      border-bottom: 2px solid #e8e8e8;
+      white-space: nowrap;
+    }
+    tbody td {
+      padding: 11px 14px;
+      border-bottom: 1px solid #f2f2f2;
+      vertical-align: middle;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #fafbfc; }
+
+    /* ── Badges ─────────────────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+    }
+    .badge-CRITICAL { background: #fce8e6; color: #c5221f; }
+    .badge-HIGH     { background: #fef3e2; color: #b46309; }
+    .badge-MEDIUM   { background: #fef9e0; color: #8c6400; }
+    .badge-LOW      { background: #e6f4ea; color: #137333; }
+
+    /* ── Score cell ─────────────────────────────────────────────────────── */
+    .score { font-weight: 700; font-size: 14px; }
+    .score-CRITICAL { color: #c5221f; }
+    .score-HIGH     { color: #b46309; }
+    .score-MEDIUM   { color: #8c6400; }
+    .score-LOW      { color: #137333; }
+
+    /* ── Truncated text cells ───────────────────────────────────────────── */
+    .cell-trunc {
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cell-comment {
+      max-width: 280px;
+      word-break: break-word;
+    }
+
+    /* ── Loading / error / empty states ────────────────────────────────── */
+    .loading, .empty {
+      text-align: center;
+      padding: 48px 20px;
+      color: #888;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid #e0e0e0;
+      border-top-color: #4a90e2;
+      border-radius: 50%;
+      animation: spin .9s linear infinite;
+      margin: 0 auto 14px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg { color: #c5221f; text-align: center; padding: 32px; }
+
+    /* ── Responsive ─────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+      .container { padding: 0 12px; }
+      .section { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>📧 Email Security Dashboard</h1>
+    <p>Upwind Email Scorer — personal stats for your inbox</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Loading state -->
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <p>Loading your security data…</p>
+  </div>
+
+  <!-- Main content (hidden until data loads) -->
+  <div id="content" style="display:none">
+
+    <!-- KPI cards -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-value" id="kpi-total">—</span>
+        <div class="kpi-label">Emails Analyzed</div>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-value" id="kpi-avg" style="color:#4a90e2">—</span>
+        <div class="kpi-label">Avg Threat Score</div>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-value" id="kpi-threats" style="color:#c5221f">—</span>
+        <div class="kpi-label">Critical + High</div>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-value" id="kpi-feedback">—</span>
+        <div class="kpi-label">Feedbacks Given</div>
+      </div>
+    </div>
+
+    <!-- Risk distribution -->
+    <div class="section">
+      <h2>Risk Distribution</h2>
+      <div id="distribution"></div>
+    </div>
+
+    <!-- Email history table -->
+    <div class="section">
+      <h2>Email History</h2>
+      <div class="table-wrap" id="history-content"></div>
+    </div>
+
+    <!-- Feedback table -->
+    <div class="section">
+      <h2>Score Feedback</h2>
+      <div class="table-wrap" id="feedback-content"></div>
+    </div>
+
+  </div><!-- /#content -->
+
+  <!-- Error state -->
+  <div id="error-state" style="display:none"></div>
+
+</div><!-- /.container -->
+
+<script>
+  var RISK_BAR_COLOR = {
+    CRITICAL: '#d93025',
+    HIGH:     '#f29900',
+    MEDIUM:   '#e8ab00',
+    LOW:      '#1e8e3e'
+  };
+  var RISK_LABEL = {
+    CRITICAL: '🔴 Critical',
+    HIGH:     '🟠 High',
+    MEDIUM:   '🟡 Medium',
+    LOW:      '🟢 Low'
+  };
+
+  /* ── Helpers ─────────────────────────────────────────────────────────── */
+
+  function esc(str) {
+    return String(str == null ? '—' : str)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function fmt(ts) {
+    if (!ts) return '—';
+    var d = new Date(ts);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  function badge(risk) {
+    if (!risk) return '—';
+    return '<span class="badge badge-' + risk + '">' + risk + '</span>';
+  }
+
+  function scoreCell(score, risk) {
+    return '<span class="score score-' + (risk||'') + '">' + score + '</span>';
+  }
+
+  /* ── Render distribution ─────────────────────────────────────────────── */
+
+  function renderDistribution(byRisk, total) {
+    var risks = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+    var html  = '';
+    risks.forEach(function(r) {
+      var count = byRisk[r] || 0;
+      var pct   = total > 0 ? Math.max(Math.round((count / total) * 100), 2) : 2;
+      html += '<div class="dist-row">' +
+        '<div class="dist-label">' + RISK_LABEL[r] + '</div>' +
+        '<div class="dist-bar-bg">' +
+          '<div class="dist-bar" style="width:' + pct + '%;background:' + RISK_BAR_COLOR[r] + '">' +
+            (pct > 12 ? pct + '%' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="dist-count">' + count + '</div>' +
+        '</div>';
+    });
+    document.getElementById('distribution').innerHTML = html;
+  }
+
+  /* ── Render history table ────────────────────────────────────────────── */
+
+  function renderHistory(history) {
+    var el = document.getElementById('history-content');
+    if (!history || history.length === 0) {
+      el.innerHTML = '<div class="empty">No emails analyzed yet.<br>Open an email in Gmail to get started.</div>';
+      return;
+    }
+    var rows = history.map(function(e) {
+      return '<tr>' +
+        '<td style="white-space:nowrap">' + fmt(e.ts) + '</td>' +
+        '<td class="cell-trunc">' + esc(e.from) + '</td>' +
+        '<td class="cell-trunc">' + esc(e.subj) + '</td>' +
+        '<td>' + scoreCell(e.score, e.risk) + '<span style="color:#999;font-size:11px"> /100</span></td>' +
+        '<td>' + badge(e.risk) + '</td>' +
+        '</tr>';
+    }).join('');
+    el.innerHTML =
+      '<table>' +
+        '<thead><tr>' +
+          '<th>Date</th><th>From</th><th>Subject</th><th>Score</th><th>Risk</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>';
+  }
+
+  /* ── Render feedback table ───────────────────────────────────────────── */
+
+  function renderFeedback(feedback) {
+    var el = document.getElementById('feedback-content');
+    if (!feedback || feedback.length === 0) {
+      el.innerHTML = '<div class="empty">No feedback submitted yet.<br>Use the "Dispute score" button in the add-on to flag incorrect scores.</div>';
+      return;
+    }
+    var rows = feedback.map(function(e) {
+      return '<tr>' +
+        '<td style="white-space:nowrap">' + fmt(e.ts) + '</td>' +
+        '<td>' + scoreCell(e.score, e.risk) + '<span style="color:#999;font-size:11px"> /100</span></td>' +
+        '<td>' + badge(e.risk) + '</td>' +
+        '<td>' + badge(e.suggestedRisk) + '</td>' +
+        '<td class="cell-comment">' + esc(e.comment) + '</td>' +
+        '</tr>';
+    }).join('');
+    el.innerHTML =
+      '<table>' +
+        '<thead><tr>' +
+          '<th>Date</th><th>Score</th><th>Original Risk</th><th>Your Assessment</th><th>Comment</th>' +
+        '</tr></thead>' +
+        '<tbody>' + rows + '</tbody>' +
+      '</table>';
+  }
+
+  /* ── Main render ─────────────────────────────────────────────────────── */
+
+  function renderPage(data) {
+    var stats    = data.stats    || {};
+    var history  = data.history  || [];
+    var feedback = data.feedback || [];
+
+    var byRisk = stats.byRisk || { CRITICAL:0, HIGH:0, MEDIUM:0, LOW:0 };
+
+    document.getElementById('kpi-total').textContent    = stats.total || 0;
+    document.getElementById('kpi-avg').textContent      = stats.total > 0 ? stats.avgScore + '/100' : '—';
+    document.getElementById('kpi-threats').textContent  = (byRisk.CRITICAL||0) + (byRisk.HIGH||0);
+    document.getElementById('kpi-feedback').textContent = feedback.length;
+
+    renderDistribution(byRisk, stats.total || 0);
+    renderHistory(history);
+    renderFeedback(feedback);
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  }
+
+  function showError(err) {
+    document.getElementById('loading').style.display = 'none';
+    var el = document.getElementById('error-state');
+    el.style.display = 'block';
+    el.innerHTML = '<div class="error-msg">⚠ Could not load data.<br><small>' + esc(err && err.message || String(err)) + '</small></div>';
+  }
+
+  // Fetch data from Apps Script server-side
+  google.script.run
+    .withSuccessHandler(renderPage)
+    .withFailureHandler(showError)
+    .getStatsData();
+</script>
+</body>
+</html>

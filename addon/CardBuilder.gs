@@ -142,20 +142,251 @@ function buildResultCard(data) {
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
+  var stableId = (data.analysisId) || (data.metadata && data.metadata.timestamp) || "";
+
+  var actionsSection = CardService.newCardSection()
+    .addWidget(
+      CardService.newButtonSet()
+        .addButton(
+          CardService.newTextButton()
+            .setText("Re-analyze")
+            .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED)
+            .setOnClickAction(
+              CardService.newAction().setFunctionName("onRetry")
+            )
+        )
+        .addButton(
+          CardService.newTextButton()
+            .setText("My Stats")
+            .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED)
+            .setOnClickAction(
+              CardService.newAction().setFunctionName("onShowStats")
+            )
+        )
+    )
+    .addWidget(
+      CardService.newTextButton()
+        .setText("Dispute score")
+        .setTextButtonStyle(CardService.TextButtonStyle.TEXT)
+        .setOnClickAction(
+          CardService.newAction()
+            .setFunctionName("onShowFeedbackForm")
+            .setParameters({
+              messageId: stableId,
+              score:     String(data.finalScore),
+              riskLevel: data.riskLevel
+            })
+        )
+    );
+
+  var webAppUrl = getWebAppUrl();
+  if (webAppUrl) {
+    actionsSection.addWidget(
+      CardService.newTextButton()
+        .setText("Open Stats Dashboard")
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setOpenLink(
+          CardService.newOpenLink()
+            .setUrl(webAppUrl)
+            .setOpenAs(CardService.OpenAs.FULL_SIZE)
+            .setOnClose(CardService.OnClose.NOTHING)
+        )
+    );
+  }
+
+  card.addSection(actionsSection);
+
+  return card.build();
+}
+
+/** Builds the feedback form card for disputing a score */
+function buildFeedbackFormCard(messageId, score, riskLevel) {
+  var riskConfig = RISK_COLORS[riskLevel] || RISK_COLORS["LOW"];
+
+  var selectionInput = CardService.newSelectionInput()
+    .setType(CardService.SelectionInputType.RADIO_BUTTON)
+    .setFieldName("suggestedRisk")
+    .setTitle("What do you think the correct risk level is?");
+
+  ["CRITICAL", "HIGH", "MEDIUM", "LOW"].forEach(function(r) {
+    selectionInput.addItem(
+      RISK_COLORS[r].label,
+      r,
+      r === riskLevel
+    );
+  });
+
+  var submitAction = CardService.newAction()
+    .setFunctionName("onSubmitFeedback")
+    .setParameters({ messageId: messageId, score: String(score), riskLevel: riskLevel });
+
+  return CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader()
+        .setTitle("Leave Feedback")
+        .setSubtitle("Help us improve the scorer")
+        .setImageUrl("https://upwind-email-scorer.vercel.app/icons/logo.svg")
+        .setImageStyle(CardService.ImageStyle.CIRCLE)
+    )
+    .addSection(
+      CardService.newCardSection()
+        .addWidget(
+          CardService.newDecoratedText()
+            .setTopLabel("ORIGINAL SCORE")
+            .setText(riskConfig.label)
+            .setBottomLabel("Score: " + score + " / 100")
+        )
+    )
+    .addSection(
+      CardService.newCardSection()
+        .addWidget(selectionInput)
+        .addWidget(
+          CardService.newTextInput()
+            .setFieldName("comment")
+            .setTitle("Comment")
+            .setHint("What makes you think the score is off?")
+            .setMultiline(true)
+        )
+        .addWidget(
+          CardService.newButtonSet()
+            .addButton(
+              CardService.newTextButton()
+                .setText("Submit")
+                .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+                .setOnClickAction(submitAction)
+            )
+            .addButton(
+              CardService.newTextButton()
+                .setText("Cancel")
+                .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED)
+                .setOnClickAction(
+                  CardService.newAction().setFunctionName("onCancelFeedback")
+                )
+            )
+        )
+    )
+    .build();
+}
+
+/** Risk emoji map used in the stats card */
+var RISK_EMOJI = { CRITICAL: "🔴", HIGH: "🟠", MEDIUM: "🟡", LOW: "🟢" };
+
+/** Builds the statistics card showing aggregated score data for the current user */
+function buildStatsCard() {
+  var stats = computeStats();
+
+  var card = CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader()
+        .setTitle("My Email Stats")
+        .setSubtitle("Your personal security overview")
+        .setImageUrl("https://upwind-email-scorer.vercel.app/icons/logo.svg")
+        .setImageStyle(CardService.ImageStyle.CIRCLE)
+    );
+
+  if (stats.total === 0) {
+    card.addSection(
+      CardService.newCardSection()
+        .addWidget(
+          CardService.newTextParagraph()
+            .setText("No emails analyzed yet.\n\nOpen an email to get started.")
+        )
+    );
+    return card.build();
+  }
+
+  // ── Overview ──────────────────────────────────────────────────────────────
   card.addSection(
     CardService.newCardSection()
+      .setHeader("Overview")
       .addWidget(
-        CardService.newButtonSet()
-          .addButton(
-            CardService.newTextButton()
-              .setText("Re-analyze")
-              .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED)
-              .setOnClickAction(
-                CardService.newAction().setFunctionName("onRetry")
-              )
-          )
+        CardService.newDecoratedText()
+          .setTopLabel("TOTAL ANALYZED")
+          .setText(String(stats.total) + " emails")
+      )
+      .addWidget(
+        CardService.newDecoratedText()
+          .setTopLabel("AVERAGE SCORE")
+          .setText(stats.avgScore + " / 100")
+      )
+      .addWidget(
+        CardService.newDecoratedText()
+          .setTopLabel("MOST COMMON RISK")
+          .setText((RISK_EMOJI[stats.mostCommonRisk] || "") + " " + stats.mostCommonRisk)
       )
   );
+
+  // ── By risk level ─────────────────────────────────────────────────────────
+  card.addSection(
+    CardService.newCardSection()
+      .setHeader("Breakdown by Risk Level")
+      .addWidget(
+        CardService.newDecoratedText()
+          .setText("🔴 Critical")
+          .setBottomLabel(String(stats.byRisk.CRITICAL) + " email" + (stats.byRisk.CRITICAL !== 1 ? "s" : ""))
+      )
+      .addWidget(
+        CardService.newDecoratedText()
+          .setText("🟠 High")
+          .setBottomLabel(String(stats.byRisk.HIGH) + " email" + (stats.byRisk.HIGH !== 1 ? "s" : ""))
+      )
+      .addWidget(
+        CardService.newDecoratedText()
+          .setText("🟡 Medium")
+          .setBottomLabel(String(stats.byRisk.MEDIUM) + " email" + (stats.byRisk.MEDIUM !== 1 ? "s" : ""))
+      )
+      .addWidget(
+        CardService.newDecoratedText()
+          .setText("🟢 Low")
+          .setBottomLabel(String(stats.byRisk.LOW) + " email" + (stats.byRisk.LOW !== 1 ? "s" : ""))
+      )
+  );
+
+  // ── Recent history (collapsible) ──────────────────────────────────────────
+  if (stats.recent.length > 0) {
+    var historySection = CardService.newCardSection()
+      .setHeader("Recent History")
+      .setCollapsible(true)
+      .setNumUncollapsibleWidgets(3);
+
+    stats.recent.forEach(function(entry) {
+      var dateLabel = "";
+      try {
+        dateLabel = Utilities.formatDate(new Date(entry.ts), Session.getScriptTimeZone(), "MMM d");
+      } catch (e) {
+        dateLabel = "";
+      }
+      var riskEmoji = RISK_EMOJI[entry.risk] || "";
+      historySection.addWidget(
+        CardService.newDecoratedText()
+          .setTopLabel(dateLabel + "  " + riskEmoji + " " + entry.risk)
+          .setText((entry.subj || "(no subject)").slice(0, 40))
+          .setBottomLabel((entry.from || "").slice(0, 40) + "  ·  " + entry.score + " / 100")
+          .setWrapText(true)
+      );
+    });
+
+    card.addSection(historySection);
+  }
+
+  // ── Open full dashboard link ──────────────────────────────────────────
+  var dashUrl = getWebAppUrl();
+  if (dashUrl) {
+    card.addSection(
+      CardService.newCardSection()
+        .addWidget(
+          CardService.newTextButton()
+            .setText("Open Full Dashboard")
+            .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+            .setOpenLink(
+              CardService.newOpenLink()
+                .setUrl(dashUrl)
+                .setOpenAs(CardService.OpenAs.FULL_SIZE)
+                .setOnClose(CardService.OnClose.NOTHING)
+            )
+        )
+    );
+  }
 
   return card.build();
 }
