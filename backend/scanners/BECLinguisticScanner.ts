@@ -27,9 +27,53 @@ const FINANCIAL_PATTERNS = [
 
 const CREDENTIAL_PATTERNS = [
   /\bpassword\b/i, /\bverify your (account|identity|email)\b/i,
-  /\bclick (the link|here) to (confirm|verify|update)\b/i,
+  /\bclick (the link|here) to (confirm|verify|update|secure)\b/i,
   /\byour account (will be|has been) (suspended|locked|terminated)\b/i,
   /\bsign in (to|below|now)\b/i,
+  /\bsecure your account\b/i,
+  /\bunauthorized (login|access|activity)\b/i,
+  /\bnew (device|ip|location) (was |has been )?detected\b/i,
+];
+
+const INJECTION_PATTERNS = [
+  // Classic instruction overrides
+  /ignore\s+(all\s+)?previous\s+instructions/i,
+  /\bsystem\s*:\s*(ignore|do not|output|flag|mark)/i,
+
+  // XML / tag escape attempts (e.g. </email_content>, <system_override>)
+  /<\/?(email_content|system_override|system_prompt|system|assistant|user|im_start|im_end)\b[^>]*>/i,
+
+  // Bracket-style overrides: [Instructional Override], [Admin Bypass], etc.
+  /\[(instructional|admin|system|security|content|role|task)\s*(override|bypass|update|reset|change)\]/i,
+
+  // Role-change attacks
+  /you\s+are\s+(no\s+longer|now)\s+a\s+/i,
+  /forget\s+(that\s+you\s+are|your\s+(previous|prior|original)\s+(role|task|instructions))/i,
+  /your\s+(new\s+)?(role|task|job|purpose|function)\s+is\s+(now\s+)?to\s+/i,
+
+  // Note / attention to AI
+  /note\s+to\s+(security\s+)?(evaluator|analyst|reviewer|ai\b|llm\b)/i,
+  /\battention\s*[:,]?\s*(security\s+)?(analyst|evaluator|ai|model|scanner)/i,
+
+  // Bypass / scan suppression
+  /\bbypass\s+(module|check|filter|detection|scan)/i,
+  /\bdo\s+not\s+scan\s+(this\s+)?email/i,
+  /\badministrative\s+bypass\b/i,
+  /\bheaders?\s+(are\s+)?irrelevant\b/i,
+
+  // Trusted / safe marking
+  /flag\s+this\s+(email\s+)?as\s+["']?(benign|safe|clean|trusted|legitimate)/i,
+  /report\s+this\s+(email\s+)?as\s+["']?\w[\w\s]*trusted/i,
+  /confirm\s+(the\s+email\s+is|that\s+(this|the\s+email)\s+is)\s+(safe|benign|legitimate|trusted)/i,
+  /encourage\s+(the\s+)?user\s+to\s+click/i,
+
+  // Output override
+  /output\s+the\s+following\s+text\s+exactly/i,
+
+  // Insider / tester claims
+  /\binternal\s+(security\s+)?test(ing)?\b/i,
+  /i\s+am\s+(the\s+)?(lead\s+)?(security\s+engineer|ciso|soc\s+lead)/i,
+  /\bstatus\s*:\s*safe\b/i,
 ];
 
 function countPatternMatches(text: string, patterns: RegExp[]): number {
@@ -130,6 +174,20 @@ export class BECLinguisticScanner extends BaseScanner {
       );
     }
 
+    // Prompt injection attempt — any match is a CRITICAL attack indicator
+    const injectionMatches = INJECTION_PATTERNS.filter((p) => p.test(fullText));
+    if (injectionMatches.length > 0) {
+      score = Math.max(score, 90);
+      signals.push(
+        this.signal(
+          "PROMPT_INJECTION_ATTEMPT",
+          "Email contains text designed to manipulate AI security tools — direct evidence of a targeted evasion attack",
+          "CRITICAL",
+          `${injectionMatches.length} injection pattern(s) detected in email content`,
+        )
+      );
+    }
+
     // Combined urgency + authority + financial = BEC pattern
     if (urgencyCount >= 1 && authorityCount >= 1 && financialCount >= 1) {
       score = Math.max(score, 80);
@@ -160,7 +218,7 @@ export class BECLinguisticScanner extends BaseScanner {
     const stage1Score = score;
 
     // ── Stage 2: LLM analysis (conditional) ──────────────────────────────────
-    if (stage1Score > 25 && process.env.ANTHROPIC_API_KEY) {
+    if (stage1Score >= 25 && process.env.ANTHROPIC_API_KEY) {
       logger.debug("BECLinguisticScanner: invoking LLM Stage 2", { stage1Score });
 
       const llmResult = await analyzeBEC(
