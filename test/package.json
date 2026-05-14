@@ -1,0 +1,17 @@
+{
+  "name": "upwind-test",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "batch": "ts-node batch/runner.ts",
+    "judge": "ts-node llm-judge/judge.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.36.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.4.0"
+  }
+}
