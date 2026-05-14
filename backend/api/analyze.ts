@@ -66,8 +66,7 @@ export default async function handler(
   req: VercelRequest,
   res: VercelResponse
 ): Promise<void> {
-  const requestId =
-    (req.headers["x-request-id"] as string) || crypto.randomUUID();
+  const requestId = crypto.randomUUID();
 
   // Method check
   if (req.method !== "POST") {

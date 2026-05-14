@@ -129,8 +129,14 @@ function getHtmlBody(rawContent) {
 
   var body = htmlMatch[1];
 
-  // Decode Content-Transfer-Encoding if base64
-  var cteMath = rawContent.match(/Content-Transfer-Encoding:\s*(base64|quoted-printable)/i);
+  // Decode Content-Transfer-Encoding — scope the search to the HTML part's own headers,
+  // not the whole raw message (which may have a different CTE for the plain-text part).
+  var htmlPartStart = rawContent.indexOf(htmlMatch[0]);
+  var htmlPartHeadersEnd = rawContent.indexOf("\n\n", htmlPartStart);
+  var htmlPartHeaders = htmlPartHeadersEnd !== -1
+    ? rawContent.slice(htmlPartStart, htmlPartHeadersEnd)
+    : "";
+  var cteMath = htmlPartHeaders.match(/Content-Transfer-Encoding:\s*(base64|quoted-printable)/i);
   if (cteMath && cteMath[1].toLowerCase() === "base64") {
     try {
       body = Utilities.newBlob(Utilities.base64Decode(body.replace(/\s/g, "")))
@@ -140,5 +146,5 @@ function getHtmlBody(rawContent) {
     }
   }
 
-  return body.slice(0, 204800); // 200KB max
+  return body.slice(0, 20480); // 20KB max — consistent with extractEmailPayload()
 }

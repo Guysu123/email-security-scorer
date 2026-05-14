@@ -3,6 +3,10 @@ import { logger } from "../lib/logger";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 export interface BECAnalysis {
   becScore: number;        // 0–100
   signals: Array<{
@@ -33,7 +37,7 @@ export async function analyzeBEC(
   // Limit input to control costs and reduce injection surface
   const truncatedText = plainText.slice(0, 2000);
 
-  const prompt = `You are a cybersecurity analyst specializing in Business Email Compromise (BEC) detection. Analyze the email below and respond ONLY with valid JSON matching the schema provided. Do not include any explanation outside the JSON.
+  const systemPrompt = `You are a cybersecurity analyst specializing in Business Email Compromise (BEC) detection. Analyze the email data provided by the user and respond ONLY with valid JSON matching the schema. Do not include any explanation outside the JSON.
 
 RESPONSE SCHEMA:
 ${RESPONSE_SCHEMA}
@@ -51,19 +55,19 @@ CREDENTIAL_REQUEST, FEATURE_STARVATION_BEC, AI_GENERATED_DICTION,
 GIFT_CARD_REQUEST, PAYROLL_DIVERSION, VENDOR_IMPERSONATION,
 UNUSUAL_PAYMENT_REQUEST, EMOTIONAL_MANIPULATION
 
-<email_subject>${subject.slice(0, 200)}</email_subject>
-<email_sender_domain>${senderDomain}</email_sender_domain>
-<email_content>
-${truncatedText}
-</email_content>
+Respond with JSON only.`;
 
-Respond with JSON only:`;
+  const userMessage =
+    `<email_subject>${xmlEscape(subject.slice(0, 200))}</email_subject>\n` +
+    `<email_sender_domain>${xmlEscape(senderDomain)}</email_sender_domain>\n` +
+    `<email_content>${xmlEscape(truncatedText)}</email_content>`;
 
   try {
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 400,
-      messages: [{ role: "user", content: prompt }],
+      system: systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
     });
 
     const rawText = response.content[0].type === "text" ? response.content[0].text : "";
