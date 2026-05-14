@@ -3,6 +3,9 @@
   "dependencies": {},
   "exceptionLogging": "STACKDRIVER",
   "runtimeVersion": "V8",
+  "urlFetchWhitelist": [
+    "https://upwind-email-scorer.vercel.app/"
+  ],
   "oauthScopes": [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.addons.execute",
@@ -11,6 +14,9 @@
   "gmail": {
     "name": "Email Security Scorer",
     "logoUrl": "https://upwind-email-scorer.vercel.app/icons/logo.svg",
+    "homepageTrigger": {
+      "runFunction": "onHomepage"
+    },
     "contextualTriggers": [
       {
         "unconditional": {},
@@ -18,7 +24,8 @@
       }
     ],
     "openLinkUrlPrefixes": [
-      "https://upwind-email-scorer.vercel.app"
+      "https://upwind-email-scorer.vercel.app",
+      "https://script.google.com"
     ],
     "primaryColor": "#1a1a2e",
     "secondaryColor": "#4a90e2"

@@ -52,6 +52,20 @@ function onGmailMessage(e) {
       );
     }
 
+    // Persist to per-user score history (dedup by analysisId handles re-opens)
+    try {
+      appendScoreHistory({
+        id:    result.data.analysisId || (payload.envelope && payload.envelope.messageId) || "",
+        ts:    Date.now(),
+        score: result.data.finalScore,
+        risk:  result.data.riskLevel,
+        subj:  (payload.subject || "").slice(0, 50),
+        from:  (payload.sender && payload.sender.emailAddress || "").slice(0, 40)
+      });
+    } catch (err) {
+      Logger.log("History write error: " + (err.message || String(err)));
+    }
+
     // Render results card — CardBuilder.gs owns all UI construction
     return buildResultCard(result.data);
 
@@ -81,4 +95,86 @@ function onRetry(e) {
  */
 function authCallback() {
   return true;
+}
+
+/**
+ * Homepage trigger — shown when the add-on panel is open but no email is selected.
+ * @param {GoogleAppsScript.Addons.EventObject} e
+ * @returns {GoogleAppsScript.Card_Service.Card}
+ */
+function onHomepage(e) {
+  return buildStatsCard();
+}
+
+/**
+ * Pushes the stats card onto the navigation stack from within a result card.
+ * @param {GoogleAppsScript.Addons.EventObject} e
+ * @returns {GoogleAppsScript.Card_Service.ActionResponse}
+ */
+function onShowStats(e) {
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().pushCard(buildStatsCard()))
+    .build();
+}
+
+/**
+ * Pushes the feedback form card. Parameters: messageId, score, riskLevel.
+ * @param {GoogleAppsScript.Addons.EventObject} e
+ * @returns {GoogleAppsScript.Card_Service.ActionResponse}
+ */
+function onShowFeedbackForm(e) {
+  var p = e.commonEventObject.parameters;
+  return CardService.newActionResponseBuilder()
+    .setNavigation(
+      CardService.newNavigation().pushCard(
+        buildFeedbackFormCard(p.messageId, p.score, p.riskLevel)
+      )
+    )
+    .build();
+}
+
+/**
+ * Saves the submitted feedback and returns to the previous card.
+ * @param {GoogleAppsScript.Addons.EventObject} e
+ * @returns {GoogleAppsScript.Card_Service.ActionResponse}
+ */
+function onSubmitFeedback(e) {
+  var p      = e.commonEventObject.parameters;
+  var inputs = e.commonEventObject.formInputs || {};
+
+  var suggestedRisk = inputs.suggestedRisk
+    ? inputs.suggestedRisk.stringInputs.value[0]
+    : null;
+  var comment = inputs.comment
+    ? (inputs.comment.stringInputs.value[0] || "").slice(0, 500)
+    : "";
+
+  try {
+    appendFeedback({
+      id:            p.messageId,
+      ts:            Date.now(),
+      score:         parseInt(p.score, 10),
+      risk:          p.riskLevel,
+      suggestedRisk: suggestedRisk || null,
+      comment:       comment
+    });
+  } catch (err) {
+    Logger.log("Feedback write error: " + (err.message || String(err)));
+  }
+
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().popCard())
+    .setNotification(CardService.newNotification().setText("Feedback saved — thank you!"))
+    .build();
+}
+
+/**
+ * Dismisses the feedback form without saving.
+ * @param {GoogleAppsScript.Addons.EventObject} e
+ * @returns {GoogleAppsScript.Card_Service.ActionResponse}
+ */
+function onCancelFeedback(e) {
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().popCard())
+    .build();
 }

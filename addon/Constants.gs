@@ -22,6 +22,10 @@ function getEncryptionKey() {
   return PropertiesService.getScriptProperties().getProperty("PAYLOAD_ENCRYPTION_KEY") || null;
 }
 
+function getWebAppUrl() {
+  return PropertiesService.getScriptProperties().getProperty("STATS_WEBAPP_URL") || null;
+}
+
 // UI color constants for risk levels
 var RISK_COLORS = {
   CRITICAL: { icon: "ERROR", label: "🔴 CRITICAL RISK" },
