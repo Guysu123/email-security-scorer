@@ -7,7 +7,7 @@
  *   ADDON_API_SECRET = <shared secret matching Vercel env var>
  */
 
-var ADDON_VERSION = "1.0.0";
+var ADDON_VERSION = "1.0.1";
 
 function getBackendUrl() {
   return PropertiesService.getScriptProperties().getProperty("BACKEND_URL") ||
@@ -26,9 +26,3 @@ var RISK_COLORS = {
   LOW:      { icon: "CHECK_CIRCLE", label: "🟢 LOW RISK"     }
 };
 
-// Score bar rendering using Unicode block characters
-function buildScoreBar(score) {
-  var filled = Math.round(score / 10);
-  var empty  = 10 - filled;
-  return "█".repeat(filled) + "░".repeat(empty) + " " + score + "/100";
-}
