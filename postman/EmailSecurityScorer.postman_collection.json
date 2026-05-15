@@ -1,0 +1,296 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Email Security Scorer API",
+    "description": "All endpoints for the Upwind Email Security Scorer backend.\n\nSet the collection variables before running:\n- `baseUrl`  — your Vercel deployment URL (e.g. https://your-project.vercel.app) or ngrok tunnel for local dev\n- `apiSecret` — the value of ADDON_API_SECRET (same secret set in Vercel env vars and Apps Script Script Properties)\n\nEndpoints:\n  GET  /api/health   — liveness check, no auth required\n  POST /api/analyze  — full email analysis, Bearer token required",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://your-project.vercel.app",
+      "description": "Base URL of the backend. Use your Vercel production URL or ngrok tunnel for local dev (e.g. https://a1b2c3d4.ngrok-free.app)."
+    },
+    {
+      "key": "apiSecret",
+      "value": "your-addon-api-secret-here",
+      "description": "Value of ADDON_API_SECRET. Must match what is set in Vercel environment variables."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /api/health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "health"]
+            },
+            "description": "Liveness check. No authentication required. Returns backend version and the list of active scanners."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"status\": \"ok\",\n  \"version\": \"1.0.0\",\n  \"timestamp\": \"2026-05-15T12:00:00.000Z\",\n  \"scanners\": [\n    \"HeaderAuthScanner\",\n    \"BECLinguisticScanner\",\n    \"URLScanner\",\n    \"SenderReputationScanner\",\n    \"ContentStructureScanner\"\n  ]\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Analyze Email",
+      "item": [
+        {
+          "name": "Phishing — Google Docs impersonation (DMARC fail + typosquat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "Classic credential-harvesting phish: typosquatted Google domain (goog1e.com), DMARC fail, asks victim to enter username and password.\n\nExpected: score 70–90, riskLevel CRITICAL.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com;\\n   dmarc=fail (p=REJECT) header.from=goog1e.com;\\n   spf=fail (google.com: does not designate 198.51.100.42 as permitted sender) smtp.mailfrom=noreply@goog1e.com;\\n   dkim=pass header.i=@goog1e.com\\nReceived: from mail.goog1e.com (mail.goog1e.com [198.51.100.42])\\n   by mx.google.com with ESMTP id x7si123456;\\n   Wed, 14 May 2026 08:00:00 -0700\",\n  \"sender\": {\n    \"displayName\": \"Google Docs\",\n    \"emailAddress\": \"noreply@goog1e.com\",\n    \"replyTo\": null\n  },\n  \"subject\": \"Guy Surkis has shared a document with you\",\n  \"body\": {\n    \"plainText\": \"Guy Surkis has shared a document with you.\\n\\nClick here to view: https://docs.goog1e.com/document/d/1aBcDeFgHiJk/edit\\n\\nYou need to verify your account credentials to access this shared document.\\nPlease click the link above and enter your Google username and password.\\n\\nThis link will expire in 24 hours.\",\n    \"htmlContent\": null\n  },\n  \"attachments\": [],\n  \"envelope\": {\n    \"messageId\": \"<phish-google-docs-001@test.local>\",\n    \"gmailThreadId\": \"thread-phish-001\",\n    \"receivedTimestamp\": \"2026-05-14T14:00:00Z\"\n  },\n  \"requestMetadata\": {\n    \"addonVersion\": \"1.0.0\",\n    \"requestId\": \"postman-phish-google-docs\",\n    \"timestamp\": \"2026-05-14T14:00:00Z\"\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "BEC — CEO wire transfer fraud (no URLs, pure linguistics)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "Business Email Compromise: CEO impersonation requesting an urgent wire transfer. No URLs or attachments — purely linguistic attack that evades signature-based filters.\n\nExpected: score 60–85, riskLevel HIGH or CRITICAL. BECLinguisticScanner should dominate.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com;\\n   dmarc=pass header.from=company-ceo.com;\\n   spf=pass smtp.mailfrom=ceo@company-ceo.com;\\n   dkim=pass header.i=@company-ceo.com\\nReceived: from mail.company-ceo.com (mail.company-ceo.com [203.0.113.5])\\n   by mx.google.com with ESMTP id a1si000001;\\n   Wed, 14 May 2026 09:30:00 -0700\",\n  \"sender\": {\n    \"displayName\": \"David Miller (CEO)\",\n    \"emailAddress\": \"ceo@company-ceo.com\",\n    \"replyTo\": null\n  },\n  \"subject\": \"Confidential — urgent wire needed today\",\n  \"body\": {\n    \"plainText\": \"I need you to process a wire transfer immediately. This is extremely urgent and confidential — do not discuss with anyone else in the office.\\n\\nAmount: $87,500\\nBeneficiary: Global Trade Partners LLC\\nBank: First National Bank\\nAccount: 4829301847\\nRouting: 021000021\\n\\nI am in a board meeting all day and cannot take calls. Process this as soon as possible and confirm by reply email only. This must be completed before close of business today.\\n\\nDo not delay.\\n\\nDavid Miller\\nCEO\",\n    \"htmlContent\": null\n  },\n  \"attachments\": [],\n  \"envelope\": {\n    \"messageId\": \"<bec-wire-transfer-001@test.local>\",\n    \"gmailThreadId\": \"thread-bec-001\",\n    \"receivedTimestamp\": \"2026-05-14T14:00:00Z\"\n  },\n  \"requestMetadata\": {\n    \"addonVersion\": \"1.0.0\",\n    \"requestId\": \"postman-bec-wire-transfer\",\n    \"timestamp\": \"2026-05-14T14:00:00Z\"\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "BEC — Gift card request (feature starvation pattern)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "BEC feature starvation: extremely short email with financial intent, deliberately minimizes detectable signals. Classic gift-card BEC pattern.\n\nExpected: score 40–70. BECLinguisticScanner FEATURE_STARVATION_BEC signal should fire.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com;\\n   dmarc=pass header.from=gmail.com;\\n   spf=pass smtp.mailfrom=exec.assistant.corp@gmail.com;\\n   dkim=pass header.i=@gmail.com\\nReceived: from mail.gmail.com (mail.gmail.com [209.85.220.41])\\n   by mx.google.com with ESMTP id b2si000002;\\n   Wed, 14 May 2026 10:00:00 -0700\",\n  \"sender\": {\n    \"displayName\": \"Sarah Chen\",\n    \"emailAddress\": \"exec.assistant.corp@gmail.com\",\n    \"replyTo\": null\n  },\n  \"subject\": \"Quick favor\",\n  \"body\": {\n    \"plainText\": \"Can you purchase 4 x $200 Amazon gift cards for a client gift? Need the codes ASAP. Will reimburse.\",\n    \"htmlContent\": null\n  },\n  \"attachments\": [],\n  \"envelope\": {\n    \"messageId\": \"<bec-gift-card-001@test.local>\",\n    \"gmailThreadId\": \"thread-bec-002\",\n    \"receivedTimestamp\": \"2026-05-14T14:00:00Z\"\n  },\n  \"requestMetadata\": {\n    \"addonVersion\": \"1.0.0\",\n    \"requestId\": \"postman-bec-gift-card\",\n    \"timestamp\": \"2026-05-14T14:00:00Z\"\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Phishing — Fake Okta SSO with dangerous attachment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "Multi-vector attack: DMARC fail + urgency language + fake Okta domain + double-extension attachment (.pdf.exe).\n\nExpected: score 80–100, riskLevel CRITICAL. Multiple scanners should fire.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com;\\n   dmarc=fail (p=REJECT) header.from=okta-security.net;\\n   spf=fail (google.com: does not designate 185.220.101.1 as permitted sender);\\n   dkim=none\\nReceived: from 185.220.101.1 (185.220.101.1 [185.220.101.1])\\n   by mx.google.com with ESMTP id c3si000003;\\n   Wed, 14 May 2026 11:00:00 -0700\",\n  \"sender\": {\n    \"displayName\": \"Okta Security\",\n    \"emailAddress\": \"security@okta-security.net\",\n    \"replyTo\": \"harvest-responses@protonmail.com\"\n  },\n  \"subject\": \"URGENT: Your Okta session has expired — re-authenticate immediately\",\n  \"body\": {\n    \"plainText\": \"Your Okta SSO session has been flagged for suspicious activity and has been terminated.\\n\\nACTION REQUIRED: You must re-authenticate within the next 30 minutes or your account will be locked.\\n\\nRe-authenticate here: https://okta-security.net/sso/re-auth?token=a8f3k2\\n\\nAlternatively, open the attached security patch to restore access automatically.\\n\\nFailure to complete this step will result in immediate account suspension.\\n\\n— Okta Security Team\",\n    \"htmlContent\": null\n  },\n  \"attachments\": [\n    {\n      \"filename\": \"okta-patch-2026.pdf.exe\",\n      \"mimeType\": \"application/octet-stream\",\n      \"sizeBytes\": 245760\n    }\n  ],\n  \"envelope\": {\n    \"messageId\": \"<phish-okta-001@test.local>\",\n    \"gmailThreadId\": \"thread-phish-002\",\n    \"receivedTimestamp\": \"2026-05-14T14:00:00Z\"\n  },\n  \"requestMetadata\": {\n    \"addonVersion\": \"1.0.0\",\n    \"requestId\": \"postman-phish-okta\",\n    \"timestamp\": \"2026-05-14T14:00:00Z\"\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Benign — Legitimate meeting invite",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "Clean legitimate email: real Google Calendar invite, all auth passes, no suspicious language or URLs.\n\nExpected: score 0–20, riskLevel LOW.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com;\\n   dmarc=pass header.from=google.com;\\n   spf=pass smtp.mailfrom=calendar-notification@google.com;\\n   dkim=pass header.i=@google.com\\nReceived: from mail-yw1-x136.google.com (mail-yw1-x136.google.com [2607:f8b0:4864:20::136])\\n   by mx.google.com with ESMTPS id d4si000004;\\n   Wed, 14 May 2026 14:00:00 -0700\",\n  \"sender\": {\n    \"displayName\": \"Google Calendar\",\n    \"emailAddress\": \"calendar-notification@google.com\",\n    \"replyTo\": null\n  },\n  \"subject\": \"Invitation: Q2 Planning — May 20, 2026 10:00am\",\n  \"body\": {\n    \"plainText\": \"You have been invited to the following event.\\n\\nQ2 Planning\\nWhen: Tuesday, May 20, 2026 10:00am – 11:30am (PDT)\\nWhere: Google Meet (link in calendar)\\nOrganizer: Jane Smith (jane.smith@company.com)\\n\\nAgenda:\\n- Q2 OKR review\\n- Budget allocation discussion\\n- Roadmap alignment\\n\\nPlease RSVP using the buttons below.\\n\\nAccept  |  Decline  |  Maybe\",\n    \"htmlContent\": null\n  },\n  \"attachments\": [],\n  \"envelope\": {\n    \"messageId\": \"<benign-calendar-001@test.local>\",\n    \"gmailThreadId\": \"thread-benign-001\",\n    \"receivedTimestamp\": \"2026-05-14T14:00:00Z\"\n  },\n  \"requestMetadata\": {\n    \"addonVersion\": \"1.0.0\",\n    \"requestId\": \"postman-benign-calendar\",\n    \"timestamp\": \"2026-05-14T14:00:00Z\"\n  }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Benign — Internal Slack notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "Legitimate Slack notification from verified slack.com domain. Used to validate the false-positive rate — should score very low.\n\nExpected: score 0–15, riskLevel LOW.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com;\\n   dmarc=pass header.from=slack.com;\\n   spf=pass smtp.mailfrom=notifications@slack.com;\\n   dkim=pass header.i=@slack.com\\nReceived: from mail1.slack.com (mail1.slack.com [54.68.101.1])\\n   by mx.google.com with ESMTPS id e5si000005;\\n   Wed, 14 May 2026 15:30:00 -0700\",\n  \"sender\": {\n    \"displayName\": \"Slack\",\n    \"emailAddress\": \"notifications@slack.com\",\n    \"replyTo\": null\n  },\n  \"subject\": \"New message from Jane in #engineering\",\n  \"body\": {\n    \"plainText\": \"Jane Smith posted in #engineering:\\n\\n\\\"Hey team, the staging deployment for PR #482 is ready for review. I've added the test results to the PR description. Let me know if you have any questions!\\\"\\n\\nView message in Slack\",\n    \"htmlContent\": null\n  },\n  \"attachments\": [],\n  \"envelope\": {\n    \"messageId\": \"<benign-slack-001@test.local>\",\n    \"gmailThreadId\": \"thread-benign-002\",\n    \"receivedTimestamp\": \"2026-05-14T14:00:00Z\"\n  },\n  \"requestMetadata\": {\n    \"addonVersion\": \"1.0.0\",\n    \"requestId\": \"postman-benign-slack\",\n    \"timestamp\": \"2026-05-14T14:00:00Z\"\n  }\n}"
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "401 — Invalid API token",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer this-is-a-wrong-secret" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "Intentionally uses the wrong Bearer token to trigger a 401 UNAUTHORIZED response.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com; dmarc=pass\",\n  \"sender\": { \"displayName\": \"Test\", \"emailAddress\": \"test@example.com\", \"replyTo\": null },\n  \"subject\": \"Test\",\n  \"body\": { \"plainText\": \"Hello\", \"htmlContent\": null },\n  \"attachments\": [],\n  \"envelope\": { \"messageId\": \"<test@test.local>\", \"gmailThreadId\": \"thread-test\", \"receivedTimestamp\": \"2026-05-14T14:00:00Z\" },\n  \"requestMetadata\": { \"addonVersion\": \"1.0.0\", \"requestId\": \"postman-401-test\", \"timestamp\": \"2026-05-14T14:00:00Z\" }\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"error\": \"UNAUTHORIZED\",\n  \"message\": \"Invalid or missing API key\",\n  \"requestId\": \"<uuid>\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "401 — Missing Authorization header",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "No Authorization header at all — should return 401.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"rawHeaders\": \"Authentication-Results: mx.google.com; dmarc=pass\",\n  \"sender\": { \"displayName\": \"Test\", \"emailAddress\": \"test@example.com\", \"replyTo\": null },\n  \"subject\": \"Test\",\n  \"body\": { \"plainText\": \"Hello\", \"htmlContent\": null },\n  \"attachments\": [],\n  \"envelope\": { \"messageId\": \"<test@test.local>\", \"gmailThreadId\": \"thread-test\", \"receivedTimestamp\": \"2026-05-14T14:00:00Z\" },\n  \"requestMetadata\": { \"addonVersion\": \"1.0.0\", \"requestId\": \"postman-401-no-header\", \"timestamp\": \"2026-05-14T14:00:00Z\" }\n}"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "405 — Wrong HTTP method (GET on /api/analyze)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "/api/analyze only accepts POST. A GET should return 405 METHOD_NOT_ALLOWED."
+          },
+          "response": [
+            {
+              "name": "405 Method Not Allowed",
+              "status": "Method Not Allowed",
+              "code": 405,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"error\": \"METHOD_NOT_ALLOWED\",\n  \"message\": \"Use POST\",\n  \"requestId\": \"<uuid>\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "400 — Missing required fields (VALIDATION_ERROR)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{apiSecret}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/analyze",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "analyze"]
+            },
+            "description": "Body is missing `rawHeaders`, `envelope`, and `requestMetadata` — required fields per validateRequest(). Should return 400 VALIDATION_ERROR.",
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\n  \"sender\": { \"displayName\": \"Test\", \"emailAddress\": \"test@example.com\" },\n  \"subject\": \"Incomplete request — missing rawHeaders, envelope, requestMetadata\",\n  \"body\": { \"plainText\": \"Hello\", \"htmlContent\": null }\n}"
+            }
+          },
+          "response": [
+            {
+              "name": "400 Validation Error",
+              "status": "Bad Request",
+              "code": 400,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"error\": \"VALIDATION_ERROR\",\n  \"message\": \"Request body missing required fields\",\n  \"requestId\": \"<uuid>\"\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
