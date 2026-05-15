@@ -46,11 +46,12 @@ Most commercial email security products cover only the structural plane. This ar
 When you open an email in Gmail, the add-on:
 
 1. Extracts the full raw MIME payload (headers, body, attachment metadata)
-2. Posts it to a serverless analysis backend
-3. Runs 5 independent scanners in parallel
-4. Returns a 0–100 threat score, a risk level (LOW / MEDIUM / HIGH / CRITICAL), an explainable verdict, and per-scanner signal breakdowns
-5. Displays everything in a Gmail sidebar card
-6. Stores the result locally for your personal stats dashboard
+2. Optionally encrypts the payload end-to-end with HMAC-SHA256-CTR (`Crypto.gs`) before it leaves the browser
+3. Posts it to a serverless analysis backend (Bearer token authenticated)
+4. Decrypts and validates the payload server-side (`lib/encryption.ts`), then runs 5 independent scanners in parallel
+5. Returns a 0–100 threat score, a risk level (LOW / MEDIUM / HIGH / CRITICAL), an explainable verdict, and per-scanner signal breakdowns
+6. Displays everything in a Gmail sidebar card
+7. Stores the result locally for your personal stats dashboard
 
 You can also dispute any score ("Dispute score" button → feedback form), and view all your history and feedback in a dedicated web dashboard.
 
@@ -64,14 +65,16 @@ Gmail contextual trigger (email opened)
         ▼
 Google Apps Script Add-on
   ├── MimeParser.gs      — raw MIME → structured payload
+  ├── Crypto.gs          — (optional) HMAC-SHA256-CTR encrypt payload before sending
   ├── ApiClient.gs       — authenticated POST to backend
   ├── CardBuilder.gs     — Gmail sidebar card UI
   ├── Storage.gs         — per-user history & feedback (PropertiesService)
   └── WebApp.gs          — serves the stats HTML dashboard
-        │  JSON over HTTPS (Bearer token auth)
+        │  JSON over HTTPS · Bearer token auth · (optional) encrypted payload
         ▼
 Vercel Serverless Function  (TypeScript, Node.js)
   ├── api/analyze.ts     — auth · rate-limit · size guard · decrypt · validate
+  ├── lib/encryption.ts  — (optional) HMAC-SHA256-CTR decrypt & verify payload
   ├── lib/sanitizer.ts   — trust boundary: raw request → safe EmailContext
   ├── lib/orchestrator.ts— 5 scanners, Promise.allSettled (parallel)
   └── lib/scoring.ts     — weighted aggregation + amplification rules
@@ -85,14 +88,17 @@ Gmail Sidebar Card
 flowchart TD
     A([User opens email in Gmail]) --> B[onGmailMessage — Code.gs]
     B --> C[extractEmailPayload — MimeParser.gs]
-    C --> D[callAnalyzeApi — ApiClient.gs\nPOST /api/analyze\nBearer token auth]
+    C --> ENC[Crypto.gs — optional\nHMAC-SHA256-CTR encrypt payload\nif PAYLOAD_ENCRYPTION_KEY set]
+    ENC --> D[callAnalyzeApi — ApiClient.gs\nPOST /api/analyze\nBearer token auth]
 
     D --> E{handler — api/analyze.ts}
     E -->|401| ERR1([UNAUTHORIZED])
     E -->|429| ERR2([RATE_LIMITED])
     E -->|413| ERR3([PAYLOAD_TOO_LARGE])
 
-    E --> F[sanitize — lib/sanitizer.ts\nTrust Boundary]
+    E --> DEC[lib/encryption.ts — optional\nHMAC-SHA256-CTR decrypt & verify\nif 'enc' field present in request]
+    DEC -->|400| ERR4([DECRYPTION_FAILED])
+    DEC --> F[sanitize — lib/sanitizer.ts\nTrust Boundary]
     F --> G[runAnalysis — lib/orchestrator.ts\nPromise.allSettled]
 
     G --> H1[HeaderAuthScanner w=0.30]
@@ -113,6 +119,8 @@ flowchart TD
     style F fill:#ff6b6b,color:#fff
     style LLM fill:#4ecdc4,color:#fff
     style I fill:#45b7d1,color:#fff
+    style ENC fill:#f0a500,color:#fff
+    style DEC fill:#f0a500,color:#fff
 ```
 
 ---
