@@ -126,10 +126,10 @@ Each scanner runs inside its own timeout and try/catch. A failure in one never b
 | Scanner | Weight | Timeout | Detection Scope |
 |---|---|---|---|
 | **HeaderAuthScanner** | 30% | 4 s | SPF/DKIM/DMARC failures, Received chain anomalies, DKIM domain misalignment, SMTP smuggling indicators |
-| **BECLinguisticScanner** | 25% | 12 s | Rule-based urgency/authority/financial patterns (Stage 1), Claude Haiku LLM analysis (Stage 2, gated on Stage 1 score > 25) |
+| **BECLinguisticScanner** | 25% | 8 s | Rule-based urgency/authority/financial patterns (Stage 1), Claude Haiku LLM analysis (Stage 2, gated on Stage 1 score > 25) |
 | **URLScanner** | 20% | 5 s | Punycode/homograph attacks, typosquatting (Levenshtein distance), HTML smuggling JS primitives, subdomain confusion |
-| **SenderReputationScanner** | 15% | 5 s | Lookalike sender domains, Reply-To hijacking, display name spoofing, free-provider + financial keyword combos |
-| **ContentStructureScanner** | 10% | 5 s | Dangerous attachment extensions, double-extension attacks, MIME deep nesting, zero-font CSS concealment |
+| **SenderReputationScanner** | 15% | 4 s | Lookalike sender domains, Reply-To hijacking, display name spoofing, free-provider + financial keyword combos |
+| **ContentStructureScanner** | 10% | 4 s | Dangerous attachment extensions, double-extension attacks, MIME deep nesting, zero-font CSS concealment |
 
 ### Scoring Algorithm
 
