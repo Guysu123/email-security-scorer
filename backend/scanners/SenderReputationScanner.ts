@@ -2,6 +2,7 @@ import { BaseScanner } from "./base";
 import { EmailContext, ScannerResult, Signal } from "../lib/types";
 import { checkTyposquat, checkSubdomainConfusion, BRAND_DOMAINS } from "../utils/punycode";
 import { escapeHtml } from "../utils/html";
+import { getDomainAgeDays } from "../utils/domainAge";
 
 const FREE_PROVIDERS = new Set([
   "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "live.com",
@@ -35,7 +36,7 @@ export class SenderReputationScanner extends BaseScanner {
   readonly id = "SenderReputationScanner";
   readonly displayName = "Sender Reputation";
   readonly weight = 0.15;
-  readonly timeoutMs = 4000;
+  readonly timeoutMs = 7000; // accommodates RDAP lookup (~4s budget)
 
   protected async execute(context: EmailContext): Promise<ScannerResult> {
     const signals: Signal[] = [];
@@ -144,6 +145,33 @@ export class SenderReputationScanner extends BaseScanner {
           escapeHtml(`From: ${emailAddress} appears in To: header`),
         )
       );
+    }
+
+    // ── Domain age (RDAP) ─────────────────────────────────────────────────────
+    // Skip free consumer providers — their domain age is irrelevant to sender risk.
+    if (!FREE_PROVIDERS.has(domain)) {
+      const ageDays = await getDomainAgeDays(domain);
+      if (ageDays !== null && ageDays < 30) {
+        score = Math.max(score, 75);
+        signals.push(
+          this.signal(
+            "NEWLY_REGISTERED_DOMAIN",
+            `Sender domain is only ${ageDays} day${ageDays !== 1 ? "s" : ""} old — newly registered domains account for the majority of targeted phishing infrastructure`,
+            "CRITICAL",
+            escapeHtml(`${domain} registered ${ageDays} day${ageDays !== 1 ? "s" : ""} ago`),
+          )
+        );
+      } else if (ageDays !== null && ageDays < 90) {
+        score = Math.max(score, 45);
+        signals.push(
+          this.signal(
+            "YOUNG_DOMAIN",
+            `Sender domain is less than 90 days old — recently registered domains are frequently associated with phishing campaigns`,
+            "HIGH",
+            escapeHtml(`${domain} registered ${ageDays} days ago`),
+          )
+        );
+      }
     }
 
     return this.buildResult(score, signals);

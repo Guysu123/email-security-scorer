@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { AnalyzeRequest, AnalyzeResponse, ErrorResponse, ScannerResultPublic } from "../lib/types";
 import { sanitize } from "../lib/sanitizer";
-import { runAnalysis } from "../lib/orchestrator";
+import { runAnalysis, SCANNER_WEIGHT_MAP } from "../lib/orchestrator";
 import { logger } from "../lib/logger";
 import { escapeHtml } from "../utils/html";
 import { decryptPayload } from "../lib/encryption";
@@ -136,8 +136,8 @@ export default async function handler(
     const result = await runAnalysis(context);
 
     // Build public scanner results (sanitize evidence fields)
-    const scannerResults: ScannerResultPublic[] = result.scannerResults.map((r, i) => {
-      const scannerWeight = [0.30, 0.25, 0.20, 0.15, 0.10][i] ?? 0;
+    const scannerResults: ScannerResultPublic[] = result.scannerResults.map((r) => {
+      const scannerWeight = SCANNER_WEIGHT_MAP.get(r.scannerId) ?? 0;
       return {
         scannerId: r.scannerId,
         displayName: r.displayName,
