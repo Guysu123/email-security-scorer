@@ -47,7 +47,7 @@ When you open an email in Gmail, the add-on:
 
 1. Extracts the full raw MIME payload (headers, body, attachment metadata)
 2. Checks the local cache — if this email was analyzed within the last 30 minutes, the cached result is served instantly without a backend call
-3. Optionally encrypts the payload end-to-end with HMAC-SHA256-CTR (`Crypto.gs`) before it leaves the browser
+3. Optionally encrypts the payload end-to-end with HMAC-SHA256-CTR (`Crypto.gs`) before it leaves the browser — nonce derived via SIV (Synthetic IV) to avoid dependence on a CSPRNG
 4. Posts it to a serverless analysis backend (Bearer token authenticated)
 5. Decrypts and validates the payload server-side (`lib/encryption.ts`), then runs 5 independent scanners in parallel
 6. Returns a 0–100 threat score, a risk level (LOW / MEDIUM / HIGH / CRITICAL), an explainable verdict, an actionable recommendation, and per-scanner signal breakdowns
@@ -273,11 +273,11 @@ All data is stored in Google Apps Script's `PropertiesService.getUserProperties(
 ---
 
 ### Optional Payload Encryption
-**Decision:** The request payload can be HMAC-SHA256-CTR encrypted end-to-end if `PAYLOAD_ENCRYPTION_KEY` is set in both the add-on and the backend.
+**Decision:** The request payload can be HMAC-SHA256-CTR encrypted end-to-end if `PAYLOAD_ENCRYPTION_KEY` is set in both the add-on and the backend. Three subkeys are derived from the master key via HMAC (`encryption`, `authentication`, `nonce`). The nonce is derived deterministically using a SIV (Synthetic IV) construction: `HMAC(nonceKey, plaintext)[0:16]`.
 
-**Why:** Adds a second layer of confidentiality on top of HTTPS, protecting against potential TLS interception or Vercel log exposure of email content.
+**Why:** Adds a second layer of confidentiality on top of HTTPS, protecting against potential TLS interception or Vercel log exposure of email content. Apps Script exposes no native CSPRNG — `Math.random()` is xorshift128+ seeded by the system clock and is unsuitable for cryptographic nonce generation. The SIV construction eliminates this dependency entirely: the nonce is derived from the plaintext itself, so nonce reuse is only possible if the exact same payload is sent twice with the same key (which reveals only that an identical message was sent, not its content). Security reduces to the PRF assumption already required by the MAC.
 
-**Tradeoff:** Optional — requires the same key in two places (Apps Script Script Properties and Vercel env vars). Disabled by default to reduce setup friction.
+**Tradeoff:** Optional — requires the same key in two places (Apps Script Script Properties and Vercel env vars). Disabled by default to reduce setup friction. The wire format (`nonce[16] || ciphertext[n] || mac[32]`) is identical to the previous scheme; the backend requires no changes.
 
 ---
 
@@ -285,7 +285,7 @@ All data is stored in Google Apps Script's `PropertiesService.getUserProperties(
 
 ### Cryptographic
 
-**PRNG quality for nonces (`Crypto.gs`)** — The optional payload encryption uses `Math.random()` to generate the 16-byte nonce in the Apps Script environment, which does not expose a native CSPRNG. `Math.random()` is a pseudo-random generator seeded by the V8 runtime and is not suitable for cryptographic use. Nonce reuse under a fixed key in CTR mode leaks the XOR of plaintexts. The practical risk is low for a personal single-user deployment (the attacker would also need to defeat TLS), but this is a known gap. A production implementation would derive the nonce from `Utilities.computeHmacSha256Signature` seeded with a combination of timestamp and a per-session secret property.
+**Nonce derivation (`Crypto.gs`)** — Apps Script exposes no native CSPRNG (`Math.random()` is xorshift128+ seeded by the system clock and is not suitable for cryptographic nonce generation). The implementation uses a SIV (Synthetic IV) construction instead: the nonce is derived deterministically as `HMAC(nonceKey, plaintext)[0:16]`. Nonce reuse can only occur if the exact same plaintext is encrypted twice with the same key, which reveals only that an identical message was sent — not its content. This is provably secure under the same PRF assumption the MAC already depends on. A production implementation could additionally XOR the derived nonce with a random value from `Utilities.getUuid()` to add unpredictability without depending on CSPRNG availability.
 
 ### Detection Gaps
 
@@ -603,7 +603,7 @@ email-security-scorer/
 │   ├── Storage.gs                    # Score history & feedback persistence (PropertiesService)
 │   ├── WebApp.gs                     # doGet() + getStatsData() — serves the stats dashboard
 │   ├── Stats.html                    # Full-page HTML stats dashboard
-│   ├── Crypto.gs                     # Optional HMAC-SHA256-CTR payload encryption
+│   ├── Crypto.gs                     # Optional HMAC-SHA256-CTR payload encryption (SIV nonce — no CSPRNG)
 │   └── Constants.gs                  # Runtime config helpers (BACKEND_URL, ADDON_VERSION, etc.)
 │
 ├── backend/
@@ -672,6 +672,7 @@ email-security-scorer/
 | **Secret storage** | Vercel env vars (backend) + Apps Script ScriptProperties (add-on); never in source |
 | **Scope minimization** | Add-on requests `gmail.readonly` only — zero write permissions to your mailbox |
 | **URL fetch allowlist** | `urlFetchWhitelist` in `appsscript.json` restricts `UrlFetchApp` to the backend domain |
+| **Payload encryption nonce** | SIV (Synthetic IV) — nonce derived as `HMAC(nonceKey, plaintext)[0:16]`; no CSPRNG dependency, no `Math.random()` |
 
 ---
 

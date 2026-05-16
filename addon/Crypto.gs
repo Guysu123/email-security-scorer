@@ -8,19 +8,37 @@
  *   nonce[16] || ciphertext[n] || mac[32]
  *
  * Key format: 64 hex characters (32 bytes / 256 bits).
- * Two subkeys are derived via HMAC so the same key is never reused
- * for both encryption and authentication.
+ * Three subkeys are derived via HMAC so the master key is never used directly:
+ *   encKey  = HMAC(masterKey, "encryption")
+ *   macKey  = HMAC(masterKey, "authentication")
+ *   nonceKey = HMAC(masterKey, "nonce")
+ *
+ * Nonce derivation (SIV — Synthetic IV):
+ *   nonce = HMAC(nonceKey, plaintext)[0:16]
+ *
+ * This eliminates the need for a CSPRNG. Apps Script exposes no native
+ * cryptographically-secure random source (Math.random() is xorshift128+
+ * seeded by the clock and is not suitable for nonce generation).
+ *
+ * Security property: nonce reuse occurs only if the exact same plaintext is
+ * encrypted twice with the same key, which reveals only that the same message
+ * was sent twice — nothing about the content. This is provably secure under
+ * the same PRF assumption the MAC already depends on.
  *
  * Compatible with backend/lib/encryption.ts (Node.js crypto module).
  */
 
 function encryptPayload(jsonString, hexKey) {
-  var keyBytes = hexDecode(hexKey);
-  var encKey   = hmacSha256(keyBytes, strToBytes("encryption"));
-  var macKey   = hmacSha256(keyBytes, strToBytes("authentication"));
-  var nonce    = randomBytes(16);
+  var keyBytes  = hexDecode(hexKey);
+  var encKey    = hmacSha256(keyBytes, strToBytes("encryption"));
+  var macKey    = hmacSha256(keyBytes, strToBytes("authentication"));
+  var nonceKey  = hmacSha256(keyBytes, strToBytes("nonce"));
 
-  var plaintext  = strToBytes(jsonString);
+  var plaintext = strToBytes(jsonString);
+
+  // Derive nonce deterministically from the plaintext — no PRNG required.
+  var nonce = hmacSha256(nonceKey, plaintext).slice(0, 16);
+
   var ciphertext = hmacCTR(encKey, nonce, plaintext);
   var mac        = hmacSha256(macKey, nonce.concat(ciphertext));
 
@@ -63,12 +81,6 @@ function hexDecode(hex) {
   for (var i = 0; i < hex.length; i += 2) {
     bytes.push(parseInt(hex.substr(i, 2), 16));
   }
-  return bytes;
-}
-
-function randomBytes(n) {
-  var bytes = [];
-  for (var i = 0; i < n; i++) bytes.push(Math.floor(Math.random() * 256));
   return bytes;
 }
 
