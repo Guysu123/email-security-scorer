@@ -168,17 +168,36 @@ function onSubmitFeedback(e) {
     ? (inputs.comment.stringInputs.value[0] || "").slice(0, 500)
     : "";
 
+  var feedbackRecord = {
+    id:            p.messageId,
+    ts:            Date.now(),
+    score:         parseInt(p.score, 10),
+    risk:          p.riskLevel,
+    suggestedRisk: suggestedRisk || null,
+    comment:       comment
+  };
+
+  // Persist locally for the stats dashboard
   try {
-    appendFeedback({
-      id:            p.messageId,
-      ts:            Date.now(),
-      score:         parseInt(p.score, 10),
-      risk:          p.riskLevel,
+    appendFeedback(feedbackRecord);
+  } catch (err) {
+    Logger.log("Feedback local write error: " + (err.message || String(err)));
+  }
+
+  // Send to backend so disputes are visible in Vercel logs for operator review
+  try {
+    var fbResult = callFeedbackApi({
+      messageId:     p.messageId,
+      originalScore: feedbackRecord.score,
+      originalRisk:  p.riskLevel,
       suggestedRisk: suggestedRisk || null,
       comment:       comment
     });
+    if (!fbResult.ok) {
+      Logger.log("Feedback API error: " + fbResult.error);
+    }
   } catch (err) {
-    Logger.log("Feedback write error: " + (err.message || String(err)));
+    Logger.log("Feedback API exception: " + (err.message || String(err)));
   }
 
   return CardService.newActionResponseBuilder()

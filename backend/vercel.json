@@ -7,6 +7,9 @@
     },
     "api/health.ts": {
       "maxDuration": 5
+    },
+    "api/feedback.ts": {
+      "maxDuration": 5
     }
   },
   "headers": [

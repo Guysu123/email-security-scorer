@@ -11,6 +11,44 @@
 var REQUEST_TIMEOUT_MS = 25000; // Vercel function maxDuration is 30s
 
 /**
+ * Posts a score dispute to the backend for operator review.
+ * Fire-and-forget — failure is logged but does not surface to the user.
+ *
+ * @param {Object} feedback - { messageId, originalScore, originalRisk, suggestedRisk, comment }
+ * @returns {{ ok: boolean, error: string|null }}
+ */
+function callFeedbackApi(feedback) {
+  var url    = getBackendUrl() + "/api/feedback";
+  var secret = getApiSecret();
+
+  if (!secret) {
+    return { ok: false, error: "ADDON_API_SECRET not configured" };
+  }
+
+  var options = {
+    method:             "post",
+    contentType:        "application/json",
+    headers: {
+      "Authorization":   "Bearer " + secret,
+      "X-Addon-Version": ADDON_VERSION
+    },
+    payload:            JSON.stringify(feedback),
+    muteHttpExceptions: true
+  };
+
+  try {
+    var response   = UrlFetchApp.fetch(url, options);
+    var statusCode = response.getResponseCode();
+    if (statusCode === 200) {
+      return { ok: true, error: null };
+    }
+    return { ok: false, error: "HTTP " + statusCode };
+  } catch (e) {
+    return { ok: false, error: e.message || "Network error" };
+  }
+}
+
+/**
  * @param {Object} payload - Structured email payload from MimeParser
  * @returns {{ ok: boolean, data: Object|null, statusCode: number, error: string|null }}
  */
