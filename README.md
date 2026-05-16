@@ -198,7 +198,7 @@ If you believe a score is wrong, click **"Dispute score"** on the result card. A
 - Select what you think the correct risk level should be
 - Leave a free-text comment explaining why
 
-Feedback is stored locally in Google's infrastructure under your account and visible in the stats dashboard.
+Feedback is stored locally in Google's infrastructure under your account and visible in the stats dashboard. It is also posted to the backend (`POST /api/feedback`), where it is logged as a structured event in Vercel — giving the operator visibility into disputes for future model improvement.
 
 ### Personal Stats Dashboard (in-sidebar)
 Click **"My Stats"** from any result card to see an aggregated view:
@@ -305,7 +305,7 @@ All data is stored in Google Apps Script's `PropertiesService.getUserProperties(
 
 **Per-user data is not portable** — score history and feedback live in `PropertiesService.getUserProperties()`, scoped to the Google account that authorized the add-on. Data is not queryable server-side, not exportable without custom tooling, and would be lost if the Apps Script project is deleted.
 
-**Feedback loop is local-only** — the "Dispute score" form stores corrections inside the same `PropertiesService` store. Only the user can see their own feedback; there is no mechanism for the operator to aggregate disputes and improve the model. A production system would POST feedback to a server-side store keyed on a stable user identifier, enabling supervised retraining of scanner weights over time.
+**Feedback loop is operator-visible, not yet actionable** — disputes are posted to `POST /api/feedback` and logged as structured events in Vercel, making them visible to the operator. They are also stored locally in `PropertiesService` for the stats dashboard. The missing piece is a persistent store (e.g., Upstash Redis or Supabase) and a retraining pipeline that uses accumulated disputes to adjust scanner weights over time.
 
 ### LLM
 
