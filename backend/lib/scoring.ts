@@ -63,13 +63,17 @@ const VERDICT_TEMPLATES: Record<RiskLevel, Record<string, string>> = {
 
 function selectVerdict(riskLevel: RiskLevel, topSignalIds: string[]): string {
   const templates = VERDICT_TEMPLATES[riskLevel];
+
+  // Multi-signal check: DMARC failure combined with a financial request signal
+  const hasDmarcFail = topSignalIds.some((id) => id.includes("DMARC_FAIL"));
+  const hasFinancial = topSignalIds.some(
+    (id) => id.includes("WIRE_TRANSFER") || id.includes("FINANCIAL_REQUEST") || id.includes("BEC_TRIFECTA")
+  );
+  if (hasDmarcFail && hasFinancial) {
+    return templates["DMARC_FAIL_WIRE_TRANSFER"] ?? templates["DEFAULT"];
+  }
+
   for (const id of topSignalIds) {
-    // NOTE: The DMARC_FAIL_WIRE_TRANSFER template fires when both DMARC_FAIL and
-    // a WIRE_TRANSFER signal appear in topSignals. The current check looks for both
-    // strings inside a single signalId, which cannot match. This is a placeholder
-    // for a future multi-signal verdict that cross-references two top signals.
-    if (id.includes("DMARC_FAIL") && id.includes("WIRE_TRANSFER"))
-      return templates["DMARC_FAIL_WIRE_TRANSFER"] ?? templates["DEFAULT"];
     if (id.includes("HOMOGRAPH")) return templates["HOMOGRAPH_ATTACK"] ?? templates["DEFAULT"];
     if (id.includes("DMARC_FAIL")) return templates["DMARC_FAIL"] ?? templates["DEFAULT"];
     if (id.includes("DKIM_FAIL")) return templates["DKIM_FAIL"] ?? templates["DEFAULT"];

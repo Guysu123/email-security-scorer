@@ -1,6 +1,8 @@
 # Email Security Scorer
 
-A production-grade Gmail Add-on that performs real-time, multi-dimensional threat analysis on every email you open — returning an explainable 0–100 maliciousness score with per-signal breakdowns, a personal stats dashboard, and a score-dispute mechanism.
+A Gmail Add-on built as a security engineering exercise for the Upwind Bootcamp assignment. It performs real-time, multi-dimensional threat analysis on every email you open — returning an explainable 0–100 maliciousness score with per-signal breakdowns, a personal stats dashboard, and a score-dispute mechanism.
+
+This is a single-user, personal-use system. It is designed to demonstrate architectural thinking and security awareness, not to replace a production email security platform. Known gaps and the decisions behind them are documented honestly in the [Known Limitations](#known-limitations) section.
 
 ---
 
@@ -37,7 +39,7 @@ This system operates on two threat planes simultaneously:
 | **Structural / Technical** | SMTP authentication (SPF, DKIM, DMARC), header chain anomalies, URL homograph attacks, HTML smuggling primitives, attachment deception |
 | **Semantic / Linguistic** | BEC urgency/authority/financial language patterns, AI-assisted BEC intent detection |
 
-Most commercial email security products cover only the structural plane. This architecture covers both.
+Modern commercial email security products (Proofpoint, Abnormal, Mimecast) cover both planes. The differentiating element here is the **layered prompt injection defense** — rule-based detection at Stage 1 and adversarial system-prompt hardening at the LLM stage — and the explicit reasoning about why each scanner weight was chosen.
 
 ---
 
@@ -142,7 +144,7 @@ Each scanner runs inside its own timeout and try/catch. A failure in one never b
 | **HeaderAuthScanner** | 30% | 4 s | SPF/DKIM/DMARC failures, Received chain anomalies, DKIM domain misalignment, SMTP smuggling indicators |
 | **BECLinguisticScanner** | 25% | 8 s | Rule-based urgency/authority/financial patterns (Stage 1), Claude Haiku LLM analysis (Stage 2, gated on Stage 1 score > 25) |
 | **URLScanner** | 20% | 5 s | Punycode/homograph attacks, typosquatting (Levenshtein distance), HTML smuggling JS primitives, subdomain confusion |
-| **SenderReputationScanner** | 15% | 4 s | Lookalike sender domains, Reply-To hijacking, display name spoofing, free-provider + financial keyword combos |
+| **SenderReputationScanner** | 15% | 7 s | Lookalike sender domains, Reply-To hijacking, display name spoofing, free-provider + financial keyword combos, **domain age via RDAP** (< 30 days = CRITICAL, < 90 days = HIGH) |
 | **ContentStructureScanner** | 10% | 4 s | Dangerous attachment extensions, double-extension attacks, MIME deep nesting, zero-font CSS concealment |
 
 ### Scoring Algorithm
@@ -275,9 +277,9 @@ All data is stored in Google Apps Script's `PropertiesService.getUserProperties(
 ### Optional Payload Encryption
 **Decision:** The request payload can be HMAC-SHA256-CTR encrypted end-to-end if `PAYLOAD_ENCRYPTION_KEY` is set in both the add-on and the backend. Three subkeys are derived from the master key via HMAC (`encryption`, `authentication`, `nonce`). The nonce is derived deterministically using a SIV (Synthetic IV) construction: `HMAC(nonceKey, plaintext)[0:16]`.
 
-**Why:** Adds a second layer of confidentiality on top of HTTPS, protecting against potential TLS interception or Vercel log exposure of email content. Apps Script exposes no native CSPRNG — `Math.random()` is xorshift128+ seeded by the system clock and is unsuitable for cryptographic nonce generation. The SIV construction eliminates this dependency entirely: the nonce is derived from the plaintext itself, so nonce reuse is only possible if the exact same payload is sent twice with the same key (which reveals only that an identical message was sent, not its content). Security reduces to the PRF assumption already required by the MAC.
+**Why:** Apps Script exposes no native CSPRNG — `Math.random()` is xorshift128+ seeded by the system clock and is unsuitable for cryptographic nonce generation. The SIV construction eliminates this dependency entirely. Nonce reuse only occurs if the exact same payload is sent twice with the same key, which reveals only that an identical message was sent — not its content. Security reduces to the same PRF assumption required by the MAC.
 
-**Tradeoff:** Optional — requires the same key in two places (Apps Script Script Properties and Vercel env vars). Disabled by default to reduce setup friction. The wire format (`nonce[16] || ciphertext[n] || mac[32]`) is identical to the previous scheme; the backend requires no changes.
+**Tradeoff:** Optional — requires the same key in two places. Disabled by default to reduce setup friction.
 
 ---
 
@@ -285,15 +287,13 @@ All data is stored in Google Apps Script's `PropertiesService.getUserProperties(
 
 ### Cryptographic
 
-**Nonce derivation (`Crypto.gs`)** — Apps Script exposes no native CSPRNG (`Math.random()` is xorshift128+ seeded by the system clock and is not suitable for cryptographic nonce generation). The implementation uses a SIV (Synthetic IV) construction instead: the nonce is derived deterministically as `HMAC(nonceKey, plaintext)[0:16]`. Nonce reuse can only occur if the exact same plaintext is encrypted twice with the same key, which reveals only that an identical message was sent — not its content. This is provably secure under the same PRF assumption the MAC already depends on. A production implementation could additionally XOR the derived nonce with a random value from `Utilities.getUuid()` to add unpredictability without depending on CSPRNG availability.
+**SIV nonce derivation (`Crypto.gs`)** — The nonce is derived deterministically as `HMAC(nonceKey, plaintext)[0:16]`. Nonce reuse occurs only if the exact same plaintext is encrypted twice with the same key, which reveals only that an identical message was sent — not its content. A production implementation could XOR the derived nonce with a value from `Utilities.getUuid()` to add unpredictability without introducing a CSPRNG dependency.
 
 ### Detection Gaps
 
 **No attachment content scanning** — only metadata (name, MIME type, size) is analyzed. Content detonation requires an isolated sandbox (e.g., AWS Lambda with no outbound network access) and a dedicated malware analysis pipeline.
 
 **No image analysis / OCR** — malicious content embedded in images is invisible to all scanners. This includes QR code phishing (attacker embeds a QR code that links to a credential-harvesting page), which is one of the most active current attack vectors precisely because it bypasses URL-based scanners entirely.
-
-**No domain age signal** — newly registered domains (< 30 days old) are used in the overwhelming majority of phishing campaigns. A WHOIS/RDAP lookup on the sender domain would catch a large class of targeted attacks that have clean reputation scores but brand-new registration dates.
 
 **SMTP smuggling heuristic has limited coverage** — the `SMTP_SMUGGLING_INDICATOR` signal looks for a bare-LF DATA terminator in the raw header block. Gmail's MTA strips the SMTP DATA protocol layer before message delivery, so this pattern fires rarely in practice. It is retained as a structural placeholder for environments where raw SMTP capture is available.
 
@@ -304,6 +304,8 @@ All data is stored in Google Apps Script's `PropertiesService.getUserProperties(
 **Rate limiting resets on cold start** — the in-memory rate limiter is appropriate for single-user deployment. Multi-tenant deployment requires a persistent store (Redis, Vercel KV) to survive Vercel function cold starts.
 
 **Per-user data is not portable** — score history and feedback live in `PropertiesService.getUserProperties()`, scoped to the Google account that authorized the add-on. Data is not queryable server-side, not exportable without custom tooling, and would be lost if the Apps Script project is deleted.
+
+**Feedback loop is local-only** — the "Dispute score" form stores corrections inside the same `PropertiesService` store. Only the user can see their own feedback; there is no mechanism for the operator to aggregate disputes and improve the model. A production system would POST feedback to a server-side store keyed on a stable user identifier, enabling supervised retraining of scanner weights over time.
 
 ### LLM
 
@@ -603,7 +605,7 @@ email-security-scorer/
 │   ├── Storage.gs                    # Score history & feedback persistence (PropertiesService)
 │   ├── WebApp.gs                     # doGet() + getStatsData() — serves the stats dashboard
 │   ├── Stats.html                    # Full-page HTML stats dashboard
-│   ├── Crypto.gs                     # Optional HMAC-SHA256-CTR payload encryption (SIV nonce — no CSPRNG)
+│   ├── Crypto.gs                     # Optional HMAC-SHA256-CTR payload encryption (SIV nonce — no CSPRNG dependency)
 │   └── Constants.gs                  # Runtime config helpers (BACKEND_URL, ADDON_VERSION, etc.)
 │
 ├── backend/
@@ -632,7 +634,7 @@ email-security-scorer/
 │   │   ├── claude.ts                 # Anthropic SDK wrapper — schema-validated BEC analysis
 │   │   ├── html.ts                   # HTML smuggling detection + entity escaping
 │   │   ├── punycode.ts               # Homograph/typosquat detection (Levenshtein distance)
-│   │   └── dns.ts                    # SPF / DMARC DNS record fetching
+│   │   └── domainAge.ts              # RDAP domain registration date lookup
 │   ├── vercel.json                   # Function timeouts: 30 s for /api/analyze, 5 s for /api/health
 │   ├── package.json
 │   └── tsconfig.json
@@ -715,4 +717,4 @@ The batch runner sends real email payloads (phishing, BEC, benign) to the API an
 
 ---
 
-*Built for the Upwind Security Bootcamp assignment — demonstrating that the most dangerous attacks leave no technical fingerprints, and that defending against them requires operating simultaneously on structural and semantic threat planes.*
+*Built for the Upwind Security Bootcamp assignment. The core argument: BEC — the highest-loss email attack category — leaves no technical payload for signature-based scanners to find. Catching it requires operating simultaneously on the structural plane (headers, URLs, attachments) and the semantic plane (linguistic intent, pressure patterns). The interesting engineering decision is how to combine the two without letting the LLM stage become an attack surface of its own.*

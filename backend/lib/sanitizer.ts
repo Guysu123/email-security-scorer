@@ -91,8 +91,9 @@ function extractTextFromHtml(html: string): string {
 
 function truncate(s: string | null, maxBytes: number): string | null {
   if (!s) return null;
-  if (Buffer.byteLength(s, "utf8") <= maxBytes) return s;
-  return s.slice(0, maxBytes);
+  const buf = Buffer.from(s, "utf8");
+  if (buf.length <= maxBytes) return s;
+  return buf.subarray(0, maxBytes).toString("utf8");
 }
 
 // ─── Main sanitizer ───────────────────────────────────────────────────────────

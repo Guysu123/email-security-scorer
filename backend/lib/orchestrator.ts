@@ -15,6 +15,8 @@ const SCANNERS: IScanner[] = [
   new ContentStructureScanner(),
 ];
 
+export const SCANNER_WEIGHT_MAP = new Map(SCANNERS.map((s) => [s.id, s.weight]));
+
 export interface OrchestratorResult extends AggregatedScore {
   scannerResults: ScannerResult[];
   partialAnalysis: boolean;
