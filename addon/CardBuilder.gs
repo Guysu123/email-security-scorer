@@ -87,10 +87,10 @@ function buildResultCard(data) {
         .setText("<i>" + (data.verdict || "") + "</i>")
     );
 
-  if (data.recommendation) {
+  if (data.recommendation && data.riskLevel !== "LOW") {
     summarySection.addWidget(
       CardService.newDecoratedText()
-        .setTopLabel("WHAT TO DO")
+        .setTopLabel("What To Do?")
         .setText(data.recommendation)
         .setWrapText(true)
     );
@@ -151,7 +151,7 @@ function buildResultCard(data) {
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
-  var stableId = (data.analysisId) || (data.metadata && data.metadata.timestamp) || "";
+  var stableId = String((data.analysisId) || (data.metadata && data.metadata.timestamp) || "unknown");
 
   var actionsSection = CardService.newCardSection()
     .addWidget(
@@ -166,7 +166,7 @@ function buildResultCard(data) {
         )
         .addButton(
           CardService.newTextButton()
-            .setText("My Stats")
+            .setText("My Statistics")
             .setTextButtonStyle(CardService.TextButtonStyle.OUTLINED)
             .setOnClickAction(
               CardService.newAction().setFunctionName("onShowStats")
@@ -188,18 +188,12 @@ function buildResultCard(data) {
         )
     );
 
-  var webAppUrl = getWebAppUrl();
-  if (webAppUrl) {
+  if (getWebAppUrl()) {
     actionsSection.addWidget(
       CardService.newTextButton()
         .setText("Open Stats Dashboard")
         .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
-        .setOpenLink(
-          CardService.newOpenLink()
-            .setUrl(webAppUrl)
-            .setOpenAs(CardService.OpenAs.FULL_SIZE)
-            .setOnClose(CardService.OnClose.NOTHING)
-        )
+        .setOnClickAction(CardService.newAction().setFunctionName("onOpenDashboard"))
     );
   }
 
@@ -227,7 +221,7 @@ function buildFeedbackFormCard(messageId, score, riskLevel) {
 
   var submitAction = CardService.newAction()
     .setFunctionName("onSubmitFeedback")
-    .setParameters({ messageId: messageId, score: String(score), riskLevel: riskLevel });
+    .setParameters({ messageId: String(messageId || "unknown"), score: String(score), riskLevel: riskLevel });
 
   return CardService.newCardBuilder()
     .setHeader(
@@ -379,20 +373,14 @@ function buildStatsCard() {
   }
 
   // ── Open full dashboard link ──────────────────────────────────────────
-  var dashUrl = getWebAppUrl();
-  if (dashUrl) {
+  if (getWebAppUrl()) {
     card.addSection(
       CardService.newCardSection()
         .addWidget(
           CardService.newTextButton()
             .setText("Open Full Dashboard")
             .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
-            .setOpenLink(
-              CardService.newOpenLink()
-                .setUrl(dashUrl)
-                .setOpenAs(CardService.OpenAs.FULL_SIZE)
-                .setOnClose(CardService.OnClose.NOTHING)
-            )
+            .setOnClickAction(CardService.newAction().setFunctionName("onOpenDashboard"))
         )
     );
   }
