@@ -46,12 +46,13 @@ Most commercial email security products cover only the structural plane. This ar
 When you open an email in Gmail, the add-on:
 
 1. Extracts the full raw MIME payload (headers, body, attachment metadata)
-2. Optionally encrypts the payload end-to-end with HMAC-SHA256-CTR (`Crypto.gs`) before it leaves the browser
-3. Posts it to a serverless analysis backend (Bearer token authenticated)
-4. Decrypts and validates the payload server-side (`lib/encryption.ts`), then runs 5 independent scanners in parallel
-5. Returns a 0–100 threat score, a risk level (LOW / MEDIUM / HIGH / CRITICAL), an explainable verdict, and per-scanner signal breakdowns
-6. Displays everything in a Gmail sidebar card
-7. Stores the result locally for your personal stats dashboard
+2. Checks the local cache — if this email was analyzed within the last 30 minutes, the cached result is served instantly without a backend call
+3. Optionally encrypts the payload end-to-end with HMAC-SHA256-CTR (`Crypto.gs`) before it leaves the browser
+4. Posts it to a serverless analysis backend (Bearer token authenticated)
+5. Decrypts and validates the payload server-side (`lib/encryption.ts`), then runs 5 independent scanners in parallel
+6. Returns a 0–100 threat score, a risk level (LOW / MEDIUM / HIGH / CRITICAL), an explainable verdict, an actionable recommendation, and per-scanner signal breakdowns
+7. Displays everything in a Gmail sidebar card
+8. Stores the result locally for your personal stats dashboard
 
 You can also dispute any score ("Dispute score" button → feedback form), and view all your history and feedback in a dedicated web dashboard.
 
@@ -89,6 +90,11 @@ flowchart TD
     A([User opens email in Gmail]) --> B[onGmailMessage — Code.gs]
     B --> C[extractEmailPayload — MimeParser.gs]
     C --> ENC[Crypto.gs — optional\nHMAC-SHA256-CTR encrypt payload\nif PAYLOAD_ENCRYPTION_KEY set]
+
+    C --> CACHE{Cache.gs\n30 min TTL}
+    CACHE -->|hit| K
+    CACHE -->|miss| ENC
+
     ENC --> D[callAnalyzeApi — ApiClient.gs\nPOST /api/analyze\nBearer token auth]
 
     D --> E{handler — api/analyze.ts}
@@ -161,19 +167,29 @@ finalScore = clamp(round(baseScore), 0, 100)
 Risk levels:  CRITICAL ≥ 70  |  HIGH 55–69  |  MEDIUM 35–54  |  LOW 0–34
 ```
 
-Verdicts are **template-selected server-side** — never LLM-generated. This is a deliberate security decision: adversarial email content cannot manipulate the verdict text through prompt injection.
+Verdicts and recommendations are **template-selected server-side** — never LLM-generated. This is a deliberate security decision: adversarial email content cannot manipulate the verdict or recommendation text through prompt injection.
+
+Each risk level maps to a fixed actionable recommendation:
+
+| Risk Level | Recommendation |
+|---|---|
+| **CRITICAL** | Do not click any links, open attachments, or reply. Verify the request by calling the sender on a known phone number. Report as phishing. |
+| **HIGH** | Do not follow any instructions without first verifying the sender's identity through a separate channel. Do not click links or open attachments. |
+| **MEDIUM** | Proceed with caution. Confirm the sender's identity before sharing information or taking financial action. |
+| **LOW** | No action required. Standard email hygiene applies. |
 
 ---
 
 ## Features
 
 ### Real-time Email Scoring
-Every email opened in Gmail is automatically analyzed. The sidebar card shows:
+Every email opened in Gmail is automatically analyzed. Results are cached per-message for 30 minutes — re-opening the same email is instant with no backend call. The sidebar card shows:
 - Final score (0–100) and risk level with color-coded badge
 - Explainable verdict paragraph
+- **"What To Do"** — a concrete, actionable recommendation based on the risk level (e.g., "Do not click any links. Verify the sender by phone.")
 - Top threat signals with severity labels
 - Collapsible per-scanner breakdown ("Why this score?")
-- Re-analyze button
+- Re-analyze button (bypasses cache for a fresh analysis)
 
 ### Score Dispute / Feedback
 If you believe a score is wrong, click **"Dispute score"** on the result card. A form lets you:
@@ -267,21 +283,58 @@ All data is stored in Google Apps Script's `PropertiesService.getUserProperties(
 
 ## Known Limitations
 
-1. **No attachment content scanning** — only metadata (name, MIME type, size) is analyzed. Content detonation requires an isolated sandbox (e.g., AWS Lambda with no outbound network access).
+### Cryptographic
 
-2. **Expert-tuned weights, not ML-derived** — the 30/25/20/15/10 weight distribution reflects domain knowledge, not a trained model. A production system would derive weights via logistic regression on a labeled phishing/legitimate corpus.
+**PRNG quality for nonces (`Crypto.gs`)** — The optional payload encryption uses `Math.random()` to generate the 16-byte nonce in the Apps Script environment, which does not expose a native CSPRNG. `Math.random()` is a pseudo-random generator seeded by the V8 runtime and is not suitable for cryptographic use. Nonce reuse under a fixed key in CTR mode leaks the XOR of plaintexts. The practical risk is low for a personal single-user deployment (the attacker would also need to defeat TLS), but this is a known gap. A production implementation would derive the nonce from `Utilities.computeHmacSha256Signature` seeded with a combination of timestamp and a per-session secret property.
 
-3. **Rate limiting resets on cold start** — the in-memory rate limiter is appropriate for single-user deployment. Multi-tenant deployment requires a persistent store (Redis, Vercel KV).
+### Detection Gaps
 
-4. **LLM prompt injection is mitigated, not eliminated** — schema validation, plain-text-only input, XML delimiters, and the 40% contribution cap significantly reduce the attack surface, but a fine-tuned classification model would be more robust than a general-purpose LLM for adversarial inputs.
+**No attachment content scanning** — only metadata (name, MIME type, size) is analyzed. Content detonation requires an isolated sandbox (e.g., AWS Lambda with no outbound network access) and a dedicated malware analysis pipeline.
 
-5. **No OCR** — malicious content embedded in images is not detected.
+**No image analysis / OCR** — malicious content embedded in images is invisible to all scanners. This includes QR code phishing (attacker embeds a QR code that links to a credential-harvesting page), which is one of the most active current attack vectors precisely because it bypasses URL-based scanners entirely.
 
-6. **No persistent cross-session rate limiting** — the rate limit window resets on every Vercel cold start.
+**No domain age signal** — newly registered domains (< 30 days old) are used in the overwhelming majority of phishing campaigns. A WHOIS/RDAP lookup on the sender domain would catch a large class of targeted attacks that have clean reputation scores but brand-new registration dates.
+
+**SMTP smuggling heuristic has limited coverage** — the `SMTP_SMUGGLING_INDICATOR` signal looks for a bare-LF DATA terminator in the raw header block. Gmail's MTA strips the SMTP DATA protocol layer before message delivery, so this pattern fires rarely in practice. It is retained as a structural placeholder for environments where raw SMTP capture is available.
+
+### Architecture
+
+**Expert-tuned weights, not ML-derived** — the 30/25/20/15/10 scanner weight distribution reflects domain knowledge, not a trained model. A production system would derive weights via logistic regression on a labeled phishing/legitimate corpus, and retrain as threat landscape evolves.
+
+**Rate limiting resets on cold start** — the in-memory rate limiter is appropriate for single-user deployment. Multi-tenant deployment requires a persistent store (Redis, Vercel KV) to survive Vercel function cold starts.
+
+**Per-user data is not portable** — score history and feedback live in `PropertiesService.getUserProperties()`, scoped to the Google account that authorized the add-on. Data is not queryable server-side, not exportable without custom tooling, and would be lost if the Apps Script project is deleted.
+
+### LLM
+
+**Prompt injection is mitigated, not eliminated** — schema validation, plain-text-only input, XML delimiters, and the 40% blend-weight cap significantly reduce the attack surface, but a fine-tuned classification model would be more robust than a general-purpose LLM against carefully crafted adversarial inputs.
 
 ---
 
 ## Setup Guide
+
+### Option A — Use the Live Backend (Recommended for Reviewers)
+
+A production deployment is running at:
+
+```
+https://upwind-email-scorer.vercel.app
+```
+
+Verify it is live:
+
+```bash
+curl https://upwind-email-scorer.vercel.app/api/health
+# Expected: {"status":"ok","version":"1.0.0","scanners":[...]}
+```
+
+If you only want to evaluate the add-on without running your own backend, you only need to configure the Gmail Add-on (Steps 4–5 below) and point it at this URL. The credentials (`ADDON_API_SECRET` and `PAYLOAD_ENCRYPTION_KEY`) are not committed to the repository — they will be provided verbally at the interview or by direct email on request.
+
+---
+
+### Option B — Self-Host (Full Setup)
+
+Follow the steps below if you want to run your own backend instance.
 
 ### Prerequisites
 
@@ -554,6 +607,10 @@ email-security-scorer/
 │   └── Constants.gs                  # Runtime config helpers (BACKEND_URL, ADDON_VERSION, etc.)
 │
 ├── backend/
+│   ├── __tests__/                    # Unit tests (Vitest, no backend required)
+│   │   ├── punycode.test.ts          # Typosquat / homograph / subdomain-confusion edge cases
+│   │   ├── scoring.test.ts           # Weighted aggregation, risk level thresholds, override rules
+│   │   └── html.test.ts              # HTML smuggling detection, URL extraction, XSS escaping
 │   ├── api/
 │   │   ├── analyze.ts                # POST /api/analyze — auth · rate-limit · validate · dispatch
 │   │   └── health.ts                 # GET /api/health
@@ -620,18 +677,37 @@ email-security-scorer/
 
 ## Test Suite
 
-The `test/` directory contains a batch runner and an LLM judge for evaluating scoring quality.
+### Unit Tests (no backend required)
+
+Pure-function unit tests live in `backend/__tests__/`. They run offline in milliseconds with [Vitest](https://vitest.dev/).
+
+```bash
+cd backend
+npm test
+# 37 tests across 3 files — punycode, scoring engine, HTML detection
+```
+
+| File | What it tests |
+|---|---|
+| `__tests__/punycode.test.ts` | `checkTyposquat`, `checkHomograph`, `checkSubdomainConfusion` — Levenshtein edge cases, digit substitutions, punycode label extraction |
+| `__tests__/scoring.test.ts` | `scoreToRiskLevel` thresholds, `aggregate` weighted average, CRITICAL signal override, corroboration boost, signal ordering |
+| `__tests__/html.test.ts` | `detectHtmlSmuggling` (all 5 primitives), `extractUrls`, `escapeHtml` XSS cases |
+
+### Integration Tests (live backend required)
+
+The `test/` directory contains a batch runner and an LLM judge that run against a live deployed API.
 
 ```bash
 cd test
 npm install
 
 # Run batch tests against a live backend
-# Set TEST_BACKEND_URL and TEST_API_SECRET in test/.env (or environment)
+TEST_API_URL=https://your-project.vercel.app \
+TEST_API_TOKEN=your_secret \
 npx tsx batch/runner.ts
 
 # Run the LLM judge evaluation
-npx tsx llm-judge/judge.ts
+ANTHROPIC_API_KEY=sk-ant-... npx tsx llm-judge/judge.ts
 ```
 
 The batch runner sends real email payloads (phishing, BEC, benign) to the API and asserts expected score ranges. The LLM judge uses Claude to evaluate whether the signals and verdict are coherent and accurate for each result.

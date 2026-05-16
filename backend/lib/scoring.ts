@@ -9,6 +9,7 @@ export interface AggregatedScore {
   finalScore: number;
   riskLevel: RiskLevel;
   verdict: string;
+  recommendation: string;
   topSignals: Array<{ signalId: string; description: string; severity: Severity; scannerId: string }>;
 }
 
@@ -22,6 +23,13 @@ export function scoreToRiskLevel(score: number): RiskLevel {
 }
 
 // ─── Verdict templates ────────────────────────────────────────────────────────
+
+const RECOMMENDATION_TEMPLATES: Record<RiskLevel, string> = {
+  CRITICAL: "Do not click any links, open attachments, or reply. If the email requests any action, verify the request by calling the sender on a known phone number — not one provided in this email. Report the email as phishing.",
+  HIGH:     "Do not follow any instructions in this email without first verifying the sender's identity through a separate channel (phone call, in-person). Do not click links or open attachments.",
+  MEDIUM:   "Proceed with caution. Confirm the sender's identity before sharing any information or taking any financial action. When in doubt, contact the sender directly through official channels.",
+  LOW:      "No action required. Standard email hygiene applies.",
+};
 
 const VERDICT_TEMPLATES: Record<RiskLevel, Record<string, string>> = {
   CRITICAL: {
@@ -56,6 +64,10 @@ const VERDICT_TEMPLATES: Record<RiskLevel, Record<string, string>> = {
 function selectVerdict(riskLevel: RiskLevel, topSignalIds: string[]): string {
   const templates = VERDICT_TEMPLATES[riskLevel];
   for (const id of topSignalIds) {
+    // NOTE: The DMARC_FAIL_WIRE_TRANSFER template fires when both DMARC_FAIL and
+    // a WIRE_TRANSFER signal appear in topSignals. The current check looks for both
+    // strings inside a single signalId, which cannot match. This is a placeholder
+    // for a future multi-signal verdict that cross-references two top signals.
     if (id.includes("DMARC_FAIL") && id.includes("WIRE_TRANSFER"))
       return templates["DMARC_FAIL_WIRE_TRANSFER"] ?? templates["DEFAULT"];
     if (id.includes("HOMOGRAPH")) return templates["HOMOGRAPH_ATTACK"] ?? templates["DEFAULT"];
@@ -132,6 +144,7 @@ export function aggregate(scanners: ScoredScanner[]): AggregatedScore {
     }));
 
   const verdict = selectVerdict(riskLevel, topSignals.map((s) => s.signalId));
+  const recommendation = RECOMMENDATION_TEMPLATES[riskLevel];
 
-  return { finalScore, riskLevel, verdict, topSignals };
+  return { finalScore, riskLevel, verdict, recommendation, topSignals };
 }

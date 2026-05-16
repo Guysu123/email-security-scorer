@@ -87,6 +87,15 @@ function buildResultCard(data) {
         .setText("<i>" + (data.verdict || "") + "</i>")
     );
 
+  if (data.recommendation) {
+    summarySection.addWidget(
+      CardService.newDecoratedText()
+        .setTopLabel("WHAT TO DO")
+        .setText(data.recommendation)
+        .setWrapText(true)
+    );
+  }
+
   card.addSection(summarySection);
 
   // ── Top signals ───────────────────────────────────────────────────────────

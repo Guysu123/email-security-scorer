@@ -38,6 +38,13 @@ function onGmailMessage(e) {
     // Extract structured payload — MimeParser.gs handles MIME extraction
     var payload = extractEmailPayload(message);
 
+    // Serve from cache if the result is still fresh (30 min TTL)
+    var cached = getCachedResult(messageId);
+    if (cached) {
+      Logger.log("Cache hit for messageId: " + messageId);
+      return buildResultCard(cached);
+    }
+
     // Call backend — ApiClient.gs handles auth, serialization, and error handling
     var result = callAnalyzeApi(payload);
 
@@ -50,6 +57,13 @@ function onGmailMessage(e) {
           ? "Authentication error — check ADDON_API_SECRET in Script Properties"
           : result.error || "Analysis backend unreachable"
       );
+    }
+
+    // Cache the result so re-opens within 30 min skip the backend call
+    try {
+      setCachedResult(messageId, result.data);
+    } catch (err) {
+      Logger.log("Cache write error: " + (err.message || String(err)));
     }
 
     // Persist to per-user score history (dedup by analysisId handles re-opens)
@@ -81,6 +95,11 @@ function onGmailMessage(e) {
  * @returns {GoogleAppsScript.Card_Service.ActionResponse}
  */
 function onRetry(e) {
+  // Evict the cache so the user gets a fresh analysis, not the stale one they are disputing
+  var messageId = e.gmail && e.gmail.messageId;
+  if (messageId) {
+    try { PropertiesService.getUserProperties().deleteProperty("bec_" + messageId); } catch (err) {}
+  }
   var card = onGmailMessage(e);
   return CardService.newActionResponseBuilder()
     .setNavigation(

@@ -129,6 +129,7 @@ export interface AnalyzeResponse {
   finalScore: number;
   riskLevel: RiskLevel;
   verdict: string;
+  recommendation: string;
   scannerResults: ScannerResultPublic[];
   topSignals: Array<{
     signalId: string;

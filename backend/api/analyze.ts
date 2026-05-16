@@ -162,6 +162,7 @@ export default async function handler(
       finalScore: result.finalScore,
       riskLevel: result.riskLevel,
       verdict: result.verdict,
+      recommendation: result.recommendation,
       scannerResults,
       topSignals: result.topSignals,
       partialAnalysis: result.partialAnalysis,

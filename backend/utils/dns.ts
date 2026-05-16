@@ -1,3 +1,6 @@
+// Reserved for future use: independent DNS-based SPF/DMARC verification.
+// Currently unused — HeaderAuthScanner reads from the Authentication-Results header
+// set by Gmail's MTA rather than performing its own DNS lookups.
 import dns from "dns/promises";
 
 export interface AuthRecord {

@@ -10,9 +10,10 @@
 6. [Scanner Reference](#scanner-reference)
 7. [Data Models](#data-models)
 8. [Security Model](#security-model)
-9. [Configuration Reference](#configuration-reference)
-10. [Test Suite](#test-suite)
-11. [Extending the System](#extending-the-system)
+9. [Known Limitations](#known-limitations)
+10. [Configuration Reference](#configuration-reference)
+11. [Test Suite](#test-suite)
+12. [Extending the System](#extending-the-system)
 
 ---
 
@@ -42,6 +43,11 @@ User opens email in Gmail
         ▼
 onGmailMessage() [Code.gs]
   └── GmailApp.getMessageById(messageId)
+        │
+        ▼
+getCachedResult(messageId) [Cache.gs]
+  ├── HIT  → buildResultCard(cached) — returns immediately, no network call
+  └── MISS → continues to extraction
         │
         ▼
 extractEmailPayload() [MimeParser.gs]
@@ -103,13 +109,17 @@ aggregate() [lib/scoring.ts]
 AnalyzeResponse (JSON) returned to ApiClient.gs
         │
         ▼
+setCachedResult(messageId, result.data) [Cache.gs]
+  └── Stores compacted result for 30 min (PropertiesService, ≤9 KB)
+        │
+        ▼
 appendScoreHistory() [Storage.gs]
   └── Persists {id, ts, score, risk, subject, sender} to PropertiesService
         │
         ▼
 buildResultCard() [CardBuilder.gs]
-  └── Gmail sidebar card: score, risk level, verdict, signals, scanner breakdown,
-      Re-analyze / My Stats / Dispute score / Open Stats Dashboard buttons
+  └── Gmail sidebar card: score, risk level, verdict, "What To Do" recommendation,
+      signals, scanner breakdown, Re-analyze / My Stats / Dispute score / Open Stats Dashboard buttons
 ```
 
 ---
@@ -124,8 +134,8 @@ All global functions that Apps Script can invoke as triggers or card actions.
 
 | Function | Type | Description |
 |---|---|---|
-| `onGmailMessage(e)` | Contextual trigger | Fires when an email is opened. Extracts payload, calls backend, saves history, renders result card. |
-| `onRetry(e)` | Card action | Re-runs `onGmailMessage` and replaces the current card. |
+| `onGmailMessage(e)` | Contextual trigger | Fires when an email is opened. Checks cache first; on miss, extracts payload, calls backend, writes cache, saves history, renders result card. |
+| `onRetry(e)` | Card action | Evicts the cache entry for the current message, then re-runs `onGmailMessage` to force a fresh backend call. |
 | `onHomepage(e)` | Homepage trigger | Fired when the add-on panel is open but no email is selected. Returns the stats card. |
 | `onShowStats(e)` | Card action | Pushes the stats card onto the navigation stack. |
 | `onShowFeedbackForm(e)` | Card action | Pushes the feedback form card. Receives `messageId`, `score`, `riskLevel` as parameters. |
@@ -141,7 +151,7 @@ Builds all Gmail sidebar cards using the CardService API. CardService has no CSS
 |---|---|---|
 | `buildLoadingCard()` | `Card` | Shown immediately while the API call is in flight. |
 | `buildErrorCard(msg)` | `Card` | Displayed on API errors with a Retry button. |
-| `buildResultCard(data)` | `Card` | Main results card: risk badge, score, verdict, key findings, collapsible scanner breakdown, action buttons. |
+| `buildResultCard(data)` | `Card` | Main results card: risk badge, score, verdict, "What To Do" recommendation, key findings, collapsible scanner breakdown, action buttons. |
 | `buildFeedbackFormCard(messageId, score, riskLevel)` | `Card` | Form with radio buttons for suggested risk level and a multiline comment field. |
 | `buildStatsCard()` | `Card` | In-sidebar stats view: overview metrics, breakdown by risk level, collapsible recent history. Calls `computeStats()`. |
 
@@ -165,14 +175,13 @@ Sends the structured payload to `POST /api/analyze` using `UrlFetchApp`.
 
 ### Cache.gs — Per-Request Result Cache
 
-Caches analysis results in `PropertiesService.getUserProperties()` to avoid redundant API calls when the same email is reopened within the cache window.
+Caches analysis results in `PropertiesService.getUserProperties()` to avoid redundant backend calls when the same email is reopened within the cache window.
 
 - **Key:** `bec_<messageId>`
-- **TTL:** 30 minutes
+- **TTL:** 30 minutes — expiry checked on read; stale entries deleted lazily
 - **Size limit:** 9 KB per property — `compactForCache()` strips non-essential fields before writing
-- Compaction keeps: finalScore, riskLevel, verdict, top 3 signals per scanner (descriptions truncated to 100 chars)
-
-> **Note:** The cache is built infrastructure but is not yet wired into the main `onGmailMessage` flow. Each email open currently calls the backend fresh.
+- Compaction keeps: `finalScore`, `riskLevel`, `verdict`, `recommendation`, top 3 signals per scorer scanner (descriptions truncated to 100 chars)
+- **Cache invalidation:** `onRetry` explicitly deletes the property before re-running analysis, ensuring "Re-analyze" always fetches fresh results
 
 ### Storage.gs — User History and Feedback
 
@@ -329,9 +338,10 @@ The backend detects the `enc` field and decrypts before validation.
 {
   "requestId":   "uuid",
   "analysisId":  "uuid",
-  "finalScore":  75,
-  "riskLevel":   "HIGH",
-  "verdict":     "Strong urgency and pressure language detected alongside sender anomalies.",
+  "finalScore":       75,
+  "riskLevel":        "HIGH",
+  "verdict":          "Strong urgency and pressure language detected alongside sender anomalies.",
+  "recommendation":   "Do not follow any instructions without first verifying the sender's identity through a separate channel. Do not click links or open attachments.",
   "scannerResults": [
     {
       "scannerId":            "HeaderAuthScanner",
@@ -375,6 +385,7 @@ The backend detects the `enc` field and decrypts before validation.
 - `scannerResults` always contains exactly 5 entries, one per scanner, in the order: HeaderAuth → BECLinguistic → URL → SenderReputation → ContentStructure
 - If a scanner times out or throws, its `score` is `0`, `signals` is `[]`, and `error` is set. `partialAnalysis` is `true` in this case.
 - `topSignals` contains the top 5 signals across all scanners, ranked by severity
+- `verdict` and `recommendation` are static template strings selected server-side — they are never LLM-generated, which prevents prompt injection from influencing what the user is told to do
 - All `evidence` strings are HTML-entity-escaped
 
 **Error responses:**
@@ -488,9 +499,22 @@ riskLevel  = scoreToRiskLevel(finalScore)
 | `MEDIUM` | 35 – 54 |
 | `LOW` | 0 – 34 |
 
-### Verdict Selection
+### Verdict and Recommendation Selection
 
-Verdicts are selected from a static template table keyed on `(riskLevel, topSignalIds)`. They are **never LLM-generated**. This is a deliberate security decision: adversarial email content cannot manipulate the verdict string through prompt injection.
+Verdicts and recommendations are selected from static template tables keyed on `(riskLevel, topSignalIds)`. They are **never LLM-generated**. This is a deliberate security decision: adversarial email content cannot manipulate what the user is told to do through prompt injection.
+
+#### Recommendations
+
+Recommendations are keyed solely on `riskLevel` — one template per level, always shown:
+
+| Risk Level | Recommendation |
+|---|---|
+| `CRITICAL` | Do not click any links, open attachments, or reply. Verify the request by calling the sender on a known phone number — not one in this email. Report as phishing. |
+| `HIGH` | Do not follow any instructions without first verifying the sender's identity through a separate channel (phone call, in-person). Do not click links or open attachments. |
+| `MEDIUM` | Proceed with caution. Confirm the sender's identity before sharing information or taking financial action. When in doubt, contact through official channels. |
+| `LOW` | No action required. Standard email hygiene applies. |
+
+#### Verdicts
 
 | Risk Level | Signal Key | Verdict |
 |---|---|---|
@@ -774,6 +798,36 @@ The BEC scanner is the only component that passes email content to an LLM. Mitig
 
 ---
 
+## Known Limitations
+
+### Cryptographic
+
+**Nonce generation in `Crypto.gs`** — The HMAC-SHA256-CTR encryption uses `Math.random()` to generate the 16-byte per-message nonce because Apps Script does not expose a native CSPRNG. `Math.random()` is a deterministic PRNG seeded by the V8 runtime and is not cryptographically secure. Nonce reuse under the same key in CTR mode allows an attacker who observes two ciphertexts to recover the XOR of their plaintexts. The practical risk for a personal single-user deployment is low (the attacker must also defeat TLS), but this is a known weakness. A production implementation would use `Utilities.computeHmacSha256Signature` seeded with a timestamp and a per-session script property to produce unpredictable nonces within the Apps Script sandbox.
+
+### Detection Gaps
+
+**No attachment content scanning** — only filename, MIME type, and size are inspected. Executing or parsing attachment content requires an isolated detonation sandbox with no outbound network access (e.g., AWS Lambda with a VPC endpoint).
+
+**No image analysis / OCR** — content embedded in images is invisible to all scanners. This includes QR code phishing, where the attacker encodes a malicious URL as a QR image to bypass URL-based detection entirely. This is one of the most active current attack vectors.
+
+**No domain age signal** — newly registered domains (< 30 days old) appear in the majority of targeted phishing campaigns. A WHOIS/RDAP lookup on the sender domain at analysis time would catch a large class of attacks that have no reputation data because the domain was registered specifically for this campaign.
+
+**SMTP smuggling heuristic has limited reach** — `SMTP_SMUGGLING_INDICATOR` looks for a bare-LF DATA terminator (`\n.\n`) in the raw header block. Gmail's MTA strips the SMTP DATA protocol layer before delivering the message, so this pattern rarely fires in practice. The signal is retained as a structural placeholder; real SMTP smuggling detection requires inspection at the MTA boundary, before delivery.
+
+### Architecture
+
+**Expert-tuned scorer weights** — the 30/25/20/15/10 scanner weight distribution is based on domain knowledge, not a trained model. Weights have not been calibrated against a labeled phishing/legitimate corpus. A production system would derive and periodically retrain weights using logistic regression over historical scored data.
+
+**In-memory rate limiting** — the rate limiter in `api/analyze.ts` uses a `Map` in the Vercel function's memory. This state is lost on every cold start. The limit is appropriate for single-user deployment; multi-tenant deployment requires a persistent counter store (Redis, Vercel KV, or similar).
+
+**`sha256Hint` is always null** — `AttachmentMeta.sha256Hint` is defined in the data model and propagated through the full pipeline, but `MimeParser.gs` always sets it to `null`. The field was designed to support hash-based lookups against a threat intelligence feed; that integration was not implemented in this version.
+
+### LLM
+
+**Prompt injection is mitigated, not eliminated** — plain-text-only input, XML delimiters, strict JSON schema validation, and the 40% blend-weight cap significantly reduce the attack surface. A fine-tuned binary classifier trained on phishing/BEC examples would be more robust against adversarial inputs than a general-purpose instruction-following model.
+
+---
+
 ## Configuration Reference
 
 ### Backend — Environment Variables
@@ -802,7 +856,22 @@ Set in **Apps Script editor → Project Settings → Script Properties**.
 
 ## Test Suite
 
-The `test/` directory contains two independent testing tools.
+There are two independent layers of testing: unit tests for pure backend functions (no running server required), and integration tests for end-to-end scoring quality against a live API.
+
+### Unit Tests (`backend/__tests__/`)
+
+Run offline in milliseconds using [Vitest](https://vitest.dev/). Cover the pure-function core of the backend: typosquat detection, scoring aggregation rules, and HTML smuggling pattern matching.
+
+```bash
+cd backend
+npm test
+```
+
+| File | Coverage |
+|---|---|
+| `punycode.test.ts` | `checkTyposquat` (digit substitutions, hyphen prefix, rn→m), `checkHomograph` (punycode label extraction), `checkSubdomainConfusion` |
+| `scoring.test.ts` | `scoreToRiskLevel` boundary values, `aggregate` weighted average, CRITICAL signal floor override, corroboration boost (≥3 scanners), `topSignals` ordering |
+| `html.test.ts` | `detectHtmlSmuggling` (all 5 primitives + large data URIs), `extractUrls` (deduplication), `escapeHtml` (XSS prevention) |
 
 ### Batch Runner (`test/batch/`)
 
@@ -899,20 +968,3 @@ export class IPReputationScanner extends BaseScanner {
 ```
 
 **Important:** When adding a scanner, adjust the existing scanner weights so they still sum to 1.0.
-
-### Wiring the Per-Request Cache
-
-`Cache.gs` (`getCachedResult` / `setCachedResult`) is complete infrastructure but not yet connected to `onGmailMessage` in `Code.gs`. To enable it:
-
-```javascript
-// In Code.gs, inside onGmailMessage(), before calling callAnalyzeApi:
-var cached = getCachedResult(messageId);
-if (cached) {
-  return buildResultCard(cached);
-}
-
-// After getting a successful result:
-setCachedResult(messageId, result.data);
-```
-
-This would eliminate redundant API calls when the same email is opened multiple times within 30 minutes.
