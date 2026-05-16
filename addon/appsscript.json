@@ -14,9 +14,6 @@
   "gmail": {
     "name": "Email Security Scorer",
     "logoUrl": "https://upwind-email-scorer.vercel.app/icons/logo.svg",
-    "homepageTrigger": {
-      "runFunction": "onHomepage"
-    },
     "contextualTriggers": [
       {
         "unconditional": {},

@@ -21,6 +21,24 @@ function doGet(e) {
 }
 
 /**
+ * Opens the stats web app URL in a new tab. Called via setOnClickAction so
+ * the OpenLink is returned dynamically — prevents Gmail from rendering the
+ * Cancel/View footer bar on card load.
+ */
+function onOpenDashboard() {
+  var url = getWebAppUrl();
+  if (!url) return null;
+  return CardService.newActionResponseBuilder()
+    .setOpenLink(
+      CardService.newOpenLink()
+        .setUrl(url)
+        .setOpenAs(CardService.OpenAs.FULL_SIZE)
+        .setOnClose(CardService.OnClose.NOTHING)
+    )
+    .build();
+}
+
+/**
  * Called by Stats.html via google.script.run.
  * Runs in the user's context so it can access UserProperties.
  * @returns {{ stats: Object, history: Array, feedback: Array }}
