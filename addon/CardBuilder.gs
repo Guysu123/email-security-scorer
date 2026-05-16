@@ -90,7 +90,7 @@ function buildResultCard(data) {
   if (data.recommendation) {
     summarySection.addWidget(
       CardService.newDecoratedText()
-        .setTopLabel("WHAT TO DO")
+        .setTopLabel("What To Do?")
         .setText(data.recommendation)
         .setWrapText(true)
     );
